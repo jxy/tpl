@@ -15,11 +15,8 @@ proc `$`(x: gTindex): string =
 var IndexID {.compileTime.} = 0
 macro Index(lo, hi: int): expr =
   echo "\n>>>> Index(lo,hi)"
-  result = quote do:
-    gTindex[`IndexID`,`lo`,`hi`]
-    # newNimNode(nnkDistinctTy).add(
-    #   newNimNode(nnkBracketExpr).add(
-    #     bindSym"gTindex",lo,hi,st))
+  result =
+    newNimNode(nnkBracketExpr).add(bindSym"gTindex",IndexID.newIntLitNode,lo,hi)
   inc IndexID
   debug result
   echo "<<<< Index(lo,hi)"
@@ -28,47 +25,21 @@ macro assignIndex(n, lo, hi: int, t: typedesc): expr =
     error "index out of bounds: " & $n.intVal
   return quote do:
     `t`(i: `n`, assigned: true)
+template Index(t:typedesc, n:int): expr =
+  assignIndex(n, t.lo, t.hi, t)
 template Index(n:int, t:typedesc): expr =
   assignIndex(n, t.lo, t.hi, t)
 type
   Spin = Index(1,4)
   Color = Index(1,4)
-assert(not(Spin is Color))
+assert(not(Spin is Color), "Spin shouldn't be the same as Color")
 var
   s: Spin    # unassigned for dummy index
-  # ss = 5.Index(Spin)            # compile time error
+  # ss = 5.Index(Spin)            # compile time error: out of bounds
   c = 3.Index(Color)
-  # c2 = Index(5,Color)           # compile time error
-echo s
+  # c2 = Index(0,Color)           # compile time error: out of bounds
 echo c
-#[
-import macros
-
-type
-  G[a,b:static[int]] = distinct int
-  GG = distinct G[1,2]
-  g[a,b:static[int]] = int
-  gg = distinct g[1,2]
-type
-  f[a,b:static[int]] = object
-    init: bool
-    idx: int
-    # case init: bool
-    # of true: idx: int
-    # else: stub: void
-  ff {.borrow: `.`.} = distinct f[1,2]
-
-# converter toff(x:int): ff = ff(init: true, idx: x)
-
-# proc idx(x:ff): int = idx(f[1,2](x))
-var
-  vgd = 1.GG
-  vgg = 2.gg
-  vf = f[1,2](init: true, idx: 3)
-  vff = vf.ff
-
-echo vgd.int
-echo vgg.int
-echo vf.idx
-echo vff.idx
-]#
+echo s
+# s = Color.Index(3)              # compile time error: wrong type
+s = Spin.Index(3)
+echo s
