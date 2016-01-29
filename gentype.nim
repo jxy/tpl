@@ -60,8 +60,6 @@ type
     data: array[0..l1-1,V]
   gT2[V;id1,l1,id2,l2:static[int]] = object
     data: array[0..l1*l2-1,V]
-  # gT2[V;id1,id2:static[int];I1;I2] = object
-  #   data: array[I2,array[I1,V]]
 template Tensor(t: typedesc, i1: typedesc): expr =
   genTensorType(t, i1.id, 1-i1.lo+i1.hi)
 template Tensor(t: typedesc, i1: typedesc, i2: typedesc): expr =
