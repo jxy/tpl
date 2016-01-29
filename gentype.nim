@@ -5,6 +5,22 @@ template debug(x: expr): expr =
   let s = getast(arg())[0]
   echo "* ", s.repr, " -> \n  ", x.lisprepr
 
+proc replace(n: NimNode, i: NimNode, j: NimNode): NimNode =
+  if n == i: return j
+  result = n.copyNimNode
+  for c in n:
+    if c == i: result.add j
+    else: result.add c.replace(i, j)
+macro unrollfor(i: untyped, lo, hi: int, n: untyped): stmt =
+  result = newNimNode(nnkStmtList)
+  template staticint(x): expr =
+    intVal if x.kind == nnkSym: x.symbol.getImpl else: x
+  let
+    ll = staticint lo
+    hh = staticint hi
+  for j in ll..hh:
+    result.add(n.replace(i, newIntLitNode(j)))
+
 ####################
 # index types
 type
@@ -40,33 +56,39 @@ proc `Index=`(ix:var gTindex, n:static[int]) {.inline.} =
 ####################
 # tensor types
 type
-  gT1[V;id1:static[int];I1] = object
-    data: array[I1,V]
-  gT2[V;id1,id2:static[int];I1;I2] = object
-    data: array[I2,array[I1,V]]
+  gT1[V;id1,l1:static[int]] = object
+    data: array[0..l1-1,V]
+  gT2[V;id1,l1,id2,l2:static[int]] = object
+    data: array[0..l1*l2-1,V]
+  # gT2[V;id1,id2:static[int];I1;I2] = object
+  #   data: array[I2,array[I1,V]]
 template Tensor(t: typedesc, i1: typedesc): expr =
-  genTensorType(t, i1.id, i1.lo, i1.hi)
+  genTensorType(t, i1.id, 1-i1.lo+i1.hi)
 template Tensor(t: typedesc, i1: typedesc, i2: typedesc): expr =
-  genTensorType(t, i1.id, i1.lo, i1.hi, i2.id, i2.lo, i2.hi)
+  genTensorType(t, i1.id, 1-i1.lo+i1.hi, i2.id, 1-i2.lo+i2.hi)
 macro genTensorType(t: typed, ix: varargs[int]): expr =
   echo "\n>>>> genTensorType"
-  let n = ix.len div 3
+  let n = ix.len div 2
   case n
   of 1: result = newNimNode(nnkBracketExpr).add(bindsym"gT1", t)
   of 2: result = newNimNode(nnkBracketExpr).add(bindsym"gT2", t)
   else: error "unimplemented"
-  for i in 0..<n:
-    result.add(ix[3*i])
-  for i in 0..<n:
-    result.add(
-      newNimNode(nnkBracketExpr).add(
-        bindsym"range", infix(ix[3*i+1],"..",ix[3*i+2])))
-  echo result.repr
+  for i in ix:
+    result.add i
+  debug result
   echo "<<<< genTensorType"
-proc `[]`[V;id1:static[int],I1,lo1,hi1](x: gT1[V,id1,I1], i1: gTindex[id1,lo1,hi1]): V =
-  x.data[i1.i]
-proc `[]`[V;id1,id2:static[int],I1,lo1,hi1,I2,lo2,hi2](x: gT2[V,id1,id2,I1,I2], i1: gTindex[id1,lo1,hi1], i2: gTindex[id2,lo2,hi2]): V =
-  x.data[i2.i][i1.i]
+template `[]`[V;id1,l1,lo1,hi1:static[int]](x: gT1[V,id1,l1], i1: gTindex[id1,lo1,hi1]): V =
+  let i = i1.i-lo1
+  x.data[i]
+template `[]`[V;id1,l1,id2,l2,lo1,hi1,lo2,hi2:static[int]](x: gT2[V,id1,l1,id2,l2], i1: gTindex[id1,lo1,hi1], i2: gTindex[id2,lo2,hi2]): V =
+  let i = (i2.i-lo2)*l1+i1.i-lo1
+  x.data[i]
+template `[]=`[V;id1,l1,lo1,hi1:static[int]](x: var gT1[V,id1,l1], i1: gTindex[id1,lo1,hi1], y: V) =
+  let i = i1.i-lo1
+  x.data[i] = y
+template `[]=`[V;id1,l1,id2,l2,lo1,hi1,lo2,hi2:static[int]](x: var gT2[V,id1,l1,id2,l2], i1: gTindex[id1,lo1,hi1], i2: gTindex[id2,lo2,hi2], y: V) =
+  let i = (i2.i-lo2)*l1+i1.i-lo1
+  x.data[i] = y
 
 
 when isMainModule:
@@ -92,15 +114,16 @@ when isMainModule:
 
   var
     sv: Tensor(float, Spin)
-  echo sv[Spin.Index 1]
-  #   cv: gT1[float,Color.id,Color.lo..Color.hi]
-  # type
-  #   SV = gT1[float,Spin.id,Spin.lo..Spin.hi]
-    # SCV = gT[SV,Color.id,Color.lo,Color.hi]
-    # SCV = Tensor(float, Spin, Color)
+  echo 1, " : ", sv[Spin.Index 1]
+  echo 2, " : ", sv[Spin.Index 2]
+  echo 3, " : ", sv[Spin.Index 3]
+  echo 4, " : ", sv[Spin.Index 4]
+  type
+    s2 = Index(3, 4)
+    c3 = Index(0, 2)
   var
-    # scv: gT[gT[float,0,1,4],1,1,4]
-    scv: Tensor(float, Spin, Color)
-    sm: Tensor(float, Spin, Spin)
-  echo scv[1.Index(Spin),2.Index(Color)]
-  echo sm[1.Index(Spin),2.Index(Spin)]
+    scv: Tensor(float, s2, c3)
+  unrollfor j, 0, 2:
+    unrollfor i, 3, 4:
+      scv[s2.Index i, c3.Index j] = float i*10+j
+      echo "[", i, ",", j, "] : ", scv[s2.Index i, c3.Index j]
