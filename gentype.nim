@@ -1,17 +1,69 @@
 import macros
 
-template debug(x: expr): expr =
-  template arg: expr = x
-  let s = getast(arg())[0]
-  echo "* ", s.repr, " -> \n  ", x.lisprepr
-
+iterator pairs(n: NimNode): tuple[key: int, val: NimNode] =
+  for i in 0..<n.len:
+    yield(i, n[i])
 proc replace(n: NimNode, i: NimNode, j: NimNode): NimNode =
-  if n == i: return j
-  result = n.copyNimNode
-  for c in n:
-    if c == i: result.add j
-    else: result.add c.replace(i, j)
+  if n == i:
+    result = j
+  else:
+    result = n.copyNimNode
+    for c in n:
+      result.add c.replace(i,j)
+proc convert(n: NimNode, i: NimNode, j: NimNode): NimNode =
+  proc go(n: NimNode, i: NimNode, j: NimNode): tuple[rep: bool, nn: NimNode] =
+    if n == i:
+      result = (true, j)
+    else:
+      result.rep = false
+      result.nn = n.copyNimNode
+      for c in n:
+        let cc = c.go(i,j)
+        result.nn.add cc.nn
+        if cc.rep:
+          result.rep = true
+    #[
+    if result.nn.kind == nnkHiddenAddr:
+      # we may not need this, but just keep this kind here
+      # just in case something breaks because of nnkHiddenAddr.
+      result.nn = result.nn[0]
+    ]#
+    if result.nn.kind == nnkHiddenCallConv:
+      # simply ask the compiler to do the call conv again
+      result.nn = result.nn[1]
+    if result.rep:
+      for i, c in result.nn:
+        if c.kind == nnkHiddenStdConv:
+          let nnn = c[1].copy
+          if nnn.kind == nnkBracket and i == result.nn.len-1:
+            result.nn.del(i)
+            for c in nnn:
+              result.nn.add c
+          else:
+            result.nn[i] = nnn
+      if result.nn.kind in CallNodes and result.nn[0].kind == nnkSym:
+        result.nn[0] = ident($result.nn[0].symbol)
+        if "[]" == $result.nn[0]:
+          let nnn = newNimNode(nnkBracketExpr)
+          for i in 1..<result.nn.len:
+            nnn.add result.nn[i]
+          result.nn = nnn
+        for i in 0..<result.nn.len:
+          # if result.nn[i].kind in CallNodes:
+          # If we need more par, try the above line first.
+          if result.nn[i].kind in {nnkInfix, nnkCall}:
+            result.nn[i] = newPar(result.nn[i])
+      elif result.nn.kind == nnkHiddenDeref:
+        result.nn = result.nn[0]
+      elif result.nn.kind == nnkConv and result.nn[0].kind == nnkSym:
+        let nnn = newCall(ident($result.nn[0].symbol))
+        for i in 1..<result.nn.len:
+          nnn.add result.nn[i]
+        result.nn = nnn
+  result = go(n,i,j).nn
 macro unrollfor(i: untyped, lo, hi: int, n: untyped): stmt =
+  # echo "\n>>>> unrollfor"
+  # echo n.treerepr
   result = newNimNode(nnkStmtList)
   template staticint(x): expr =
     intVal if x.kind == nnkSym: x.symbol.getImpl else: x
@@ -19,7 +71,48 @@ macro unrollfor(i: untyped, lo, hi: int, n: untyped): stmt =
     ll = staticint lo
     hh = staticint hi
   for j in ll..hh:
-    result.add(n.replace(i, newIntLitNode(j)))
+    result.add(n.replace(i, newLit(j)))
+  # echo result.treerepr
+  # echo result.repr
+  # echo "<<<< unrollfor"
+
+####################
+# seqset
+type
+  seqset[T] = object
+    s: seq[T]
+proc len(s: seqset): auto = s.s.len
+iterator items[T](s: seqset[T]): T =
+  for i in s.s:
+    yield i
+proc contains[T](s: seqset[T], x: T): bool =
+  for i in s:
+    if x == i:
+      return true
+  return false
+proc init[T](s: var seqset[T]) = newseq(s.s,0)
+proc incl[T](s: var seqset[T], x: T) =
+  if not (x in s):
+    s.s.add(x)
+proc incl[T](s: var seqset[T], x: seqset[T]) =
+  for i in x:
+    s.incl(i)
+proc `+`[T](x: seqset[T], y: seqset[T]): seqset[T] =
+  result = x
+  result.incl(y)
+proc `+=`[T](x: var seqset[T], y: seqset[T]) =
+  x.incl(y)
+proc excl[T](s: var seqset[T], x: T) =
+  for n, i in s.s:
+    if x == i:
+      s.s.del(n)
+      break
+proc excl[T](s: var seqset[T], x: seqset[T]) =
+  for i in x:
+    s.excl i
+proc `-`[T](x: seqset[T], y: seqset[T]): seqset[T] =
+  result = x
+  result.excl(y)
 
 ####################
 # index type
@@ -28,31 +121,32 @@ type
     # `i` auto inits to 0, which is bad
     # `requiresInit` in v0.13 gives warning without an explicit initialization
     i: range[lo..hi]
-proc `$`(x: gTindex): string =
-  "indexType[" &
-    $gTindex.id & "," &
-    $gTindex.lo & "," &
-    $gTindex.hi &
-    "] = " & $x.i
+converter idx2int[id,lo,hi:static[int]](i: gTindex[id,lo,hi]): int = i.i
+converter idx2float[id,lo,hi:static[int]](i: gTindex[id,lo,hi]): float = i.i.float
+iterator items[id,lo,hi:static[int]](t: typedesc[gTindex[id,lo,hi]]): t =
+  for i in t.lo..t.hi:
+    yield t(i: i)
+proc `$`[id,lo,hi:static[int]](x: gTindex[id,lo,hi]): string =
+  "gTindex[" & $id & "," & $lo & "," & $hi & "] = " & $x.i
 var IndexID {.compileTime.} = 0
-macro index(lo, hi: int): expr =
-  echo "\n>>>> index(lo,hi)"
+macro index*(lo, hi: int): expr =
+  # echo "\n>>>> index(lo,hi)"
   result = newNimNode(nnkBracketExpr).add(
     bindSym"gTindex", IndexID.newIntLitNode, lo, hi)
   inc IndexID
-  debug result
-  echo "<<<< index(lo,hi)"
+  # debug result
+  # echo "<<<< index(lo,hi)"
 template staticInbound(n, lo, hi: int) =
   static:
     if n < lo or n > hi:
       error "index out of bounds: " & $n
-template index(t:typedesc, n:int): expr =
+template index*(t:typedesc, n:int): expr =
   n.staticInbound t.lo, t.hi
   t(i: n)
-template index(n:int, t:typedesc): expr =
+template index*(n:int, t:typedesc): expr =
   index(t, n)
-proc `index=`(ix:var gTindex, n:static[int]) {.inline.} =
-  n.staticInbound gTindex.lo, gTindex.hi
+proc `index=`*[id,lo,hi:static[int]](ix:var gTindex[id,lo,hi], n:static[int]) {.inline.} =
+  n.staticInbound lo, hi
   ix.i = n
 
 ####################
@@ -62,12 +156,12 @@ type
     data: array[0..l1-1,V]
   gT2[V;id1,l1,id2,l2:static[int]] = object
     data: array[0..l1*l2-1,V]
-template Tensor(t: typedesc, i1: typedesc): expr =
+template Tensor*(t: typedesc, i1: typedesc): expr =
   genTensorType(t, i1.id, 1-i1.lo+i1.hi)
-template Tensor(t: typedesc, i1: typedesc, i2: typedesc): expr =
+template Tensor*(t: typedesc, i1: typedesc, i2: typedesc): expr =
   genTensorType(t, i1.id, 1-i1.lo+i1.hi, i2.id, 1-i2.lo+i2.hi)
 macro genTensorType(t: typed, ix: varargs[int]): expr =
-  echo "\n>>>> genTensorType"
+  # echo "\n>>>> genTensorType"
   let n = ix.len div 2
   case n
   of 1: result = newNimNode(nnkBracketExpr).add(bindsym"gT1", t)
@@ -75,44 +169,152 @@ macro genTensorType(t: typed, ix: varargs[int]): expr =
   else: error "unimplemented"
   for i in ix:
     result.add i
-  debug result
-  echo "<<<< genTensorType"
-template `[]`[V;id1,l1,lo1,hi1:static[int]](x: gT1[V,id1,l1], i1: gTindex[id1,lo1,hi1]): V =
-  let i = i1.i-lo1
-  x.data[i]
-template `[]`[V;id1,l1,id2,l2,lo1,hi1,lo2,hi2:static[int]](x: gT2[V,id1,l1,id2,l2], i1: gTindex[id1,lo1,hi1], i2: gTindex[id2,lo2,hi2]): V =
-  let i = (i2.i-lo2)*l1+i1.i-lo1
-  x.data[i]
-template `[]=`[V;id1,l1,lo1,hi1:static[int]](x: var gT1[V,id1,l1], i1: gTindex[id1,lo1,hi1], y: V) =
-  let i = i1.i-lo1
-  x.data[i] = y
-template `[]=`[V;id1,l1,id2,l2,lo1,hi1,lo2,hi2:static[int]](x: var gT2[V,id1,l1,id2,l2], i1: gTindex[id1,lo1,hi1], i2: gTindex[id2,lo2,hi2], y: V) =
-  let i = (i2.i-lo2)*l1+i1.i-lo1
-  x.data[i] = y
+  # debug result
+  # echo "<<<< genTensorType"
+proc `[]`*[V;id1,l1,lo1,hi1:static[int]](x: gT1[V,id1,l1], i1: gTindex[id1,lo1,hi1]): V {.inline.} =
+  x.data[i1.i-lo1]
+proc `[]`*[V;id1,l1,lo1,hi1:static[int]](x: var gT1[V,id1,l1], i1: gTindex[id1,lo1,hi1]): var V {.inline.} =
+  x.data[i1.i-lo1]
+proc `[]`*[V;id1,l1,id2,l2,lo1,hi1,lo2,hi2:static[int]](x: gT2[V,id1,l1,id2,l2], i1: gTindex[id1,lo1,hi1], i2: gTindex[id2,lo2,hi2]): V {.inline.} =
+  x.data[(i2.i-lo2)*l1+i1.i-lo1]
+proc `[]=`*[V;id1,l1,lo1,hi1:static[int]](x: var gT1[V,id1,l1], i1: gTindex[id1,lo1,hi1], y: V) {.inline.} =
+  x.data[i1.i-lo1] = y
+proc `[]=`*[V;id1,l1,id2,l2,lo1,hi1,lo2,hi2:static[int]](x: var gT2[V,id1,l1,id2,l2], i1: gTindex[id1,lo1,hi1], i2: gTindex[id2,lo2,hi2], y: V) {.inline.} =
+  x.data[(i2.i-lo2)*l1+i1.i-lo1] = y
 
 ####################
 # dummy index type
 type
   gTindexDummy[id,lo,hi:static[int]] = object
-template dummy[id,lo,hi:static[int]](t: typedesc[gTindex[id,lo,hi]]): expr =
+
+proc `+`*(x: gTindexDummy, y: int): int = discard
+proc `-`*(x: gTindexDummy, y: int): int = discard
+
+template dummy*[id,lo,hi:static[int]](t: typedesc[gTindex[id,lo,hi]]): expr =
   gTindexDummy[id,lo,hi]
-proc `[]`[V;id1,l1,lo1,hi1:static[int]](x: gT1[V,id1,l1], i1: gTindexDummy[id1,lo1,hi1]): V = discard
-proc `[]`[V;id1,l1,id2,l2,lo1,hi1,lo2,hi2:static[int]](x: gT2[V,id1,l1,id2,l2], i1: gTindexDummy[id1,lo1,hi1], i2: gTindexDummy[id2,lo2,hi2]): V = discard
-proc `[]=`[V;id1,l1,lo1,hi1:static[int]](x: var gT1[V,id1,l1], i1: gTindexDummy[id1,lo1,hi1], y: V) = discard
-proc `[]=`[V;id1,l1,id2,l2,lo1,hi1,lo2,hi2:static[int]](x: var gT2[V,id1,l1,id2,l2], i1: gTindexDummy[id1,lo1,hi1], i2: gTindexDummy[id2,lo2,hi2], y: V) = discard
+
+proc `[]`*[V;id1,l1,lo1,hi1:static[int]](x: gT1[V,id1,l1], i1: gTindexDummy[id1,lo1,hi1]): V = discard
+proc `[]`*[V;id1,l1,lo1,hi1:static[int]](x: var gT1[V,id1,l1], i1: gTindexDummy[id1,lo1,hi1]): var V = discard
+proc `[]=`*[V;id1,l1,lo1,hi1:static[int]](x: var gT1[V,id1,l1], i1: gTindexDummy[id1,lo1,hi1], y: V) = discard
+
+proc `[]`*[V;id1,l1,id2,l2,lo1,hi1,lo2,hi2:static[int]](x: gT2[V,id1,l1,id2,l2], i1: gTindexDummy[id1,lo1,hi1], i2: gTindexDummy[id2,lo2,hi2]): V = discard
+proc `[]`*[V;id1,l1,id2,l2,lo1,hi1,lo2,hi2:static[int]](x: gT2[V,id1,l1,id2,l2], i1: gTindex[id1,lo1,hi1], i2: gTindexDummy[id2,lo2,hi2]): V = discard
+proc `[]`*[V;id1,l1,id2,l2,lo1,hi1,lo2,hi2:static[int]](x: gT2[V,id1,l1,id2,l2], i1: gTindexDummy[id1,lo1,hi1], i2: gTindex[id2,lo2,hi2]): V = discard
+
+proc `[]`*[V;id1,l1,id2,l2,lo1,hi1,lo2,hi2:static[int]](x: var gT2[V,id1,l1,id2,l2], i1: gTindexDummy[id1,lo1,hi1], i2: gTindexDummy[id2,lo2,hi2]): var V = discard
+proc `[]`*[V;id1,l1,id2,l2,lo1,hi1,lo2,hi2:static[int]](x: var gT2[V,id1,l1,id2,l2], i1: gTindex[id1,lo1,hi1], i2: gTindexDummy[id2,lo2,hi2]): var V = discard
+proc `[]`*[V;id1,l1,id2,l2,lo1,hi1,lo2,hi2:static[int]](x: var gT2[V,id1,l1,id2,l2], i1: gTindexDummy[id1,lo1,hi1], i2: gTindex[id2,lo2,hi2]): var V = discard
+
+proc `[]=`*[V;id1,l1,id2,l2,lo1,hi1,lo2,hi2:static[int]](x: var gT2[V,id1,l1,id2,l2], i1: gTindexDummy[id1,lo1,hi1], i2: gTindexDummy[id2,lo2,hi2], y: V) = discard
+proc `[]=`*[V;id1,l1,id2,l2,lo1,hi1,lo2,hi2:static[int]](x: var gT2[V,id1,l1,id2,l2], i1: gTindex[id1,lo1,hi1], i2: gTindexDummy[id2,lo2,hi2], y: V) = discard
+proc `[]=`*[V;id1,l1,id2,l2,lo1,hi1,lo2,hi2:static[int]](x: var gT2[V,id1,l1,id2,l2], i1: gTindexDummy[id1,lo1,hi1], i2: gTindex[id2,lo2,hi2], y: V) = discard
 
 ####################
 # tensor ops
-macro tensorOps(n: typed): typed =
-  echo "\n>>>> tensorOps"
+template staticfor[id,lo,hi:static[int]](i: untyped, t: typedesc[gTindex[id,lo,hi]], n: untyped): expr =
+  unrollfor i, lo, hi:
+    staticforbody(i,t,n)
+macro staticforbody(i: untyped, t: typed, n: untyped): untyped =
+  # echo "\n>>>> staticfor"
+  let
+    j = newCall(!"index", t, i)
+  result = replace(n, i, j)
+  # echo result.treerepr
+  # echo result.repr
+  # echo "<<<< staticfor"
+macro staticforstmt(n: typed): untyped =
+  # echo "\n>>>> staticforstmt"
+  # echo n.treerepr
+  expectKind(n, nnkForStmt)
+  expectKind(n[1], CallNodes)
+  assert "items" == $n[1][0].symbol
+  let
+    t = n[1][1]
+    i = n[0]
+    id = ident"__i"
+    ii = newCall(!"index", t, id)
+    s = convert(n[2], i, ii)
+  result = quote do:
+    unrollfor `id`, `t`.lo, `t`.hi:
+      `s`
+  # echo result.treerepr
+  # echo "<<<< staticforstmt"
+type
+  dummyTree = object
+    idx: seqset[NimNode]
+    branch: seq[dummyTree]
+proc treerepr(t: dummyTree): string {.compileTime.} =
+  proc go(t: dummyTree, pre: string): string =
+    var idx = "["
+    for i in t.idx:
+      idx &= " " & $i & ","
+    if ',' == idx[^1]: idx[^1] = ' '
+    idx &= "]"
+    result = pre & idx & "\n"
+    if t.branch.len > 0:
+      for i in t.branch:
+        result &= go(i, pre & "  ")
+  return go(t, "")
+proc genDummyTree(n: NimNode): dummyTree =
+  # echo "\n>>>> genDummyTree"
+  # echo n.lisprepr
+  result.idx.init
+  newseq result.branch, n.len
+  if n.kind == nnkSym:
+    let t = n.gettype
+    # echo n.repr, "  <of>  ", t.treerepr
+    if t.kind == nnkSym and "gTindexDummy" == $t.symbol:
+      result.idx.incl n
+  else:
+    for i, c in n:
+      let t = c.genDummyTree
+      result.idx += t.idx
+      result.branch[i] = t
+  # echo "<<<< genDummytree"
+proc dummyLoopCall(n: NimNode): NimNode =
+  echo "\n>>>> dummyLoopCall"
+  expectKind(n, nnkCallKinds)
   echo n.treerepr
+  let
+    fun = n[0].gettype
+    fid = ident($n[0].symbol)
+  echo '"', fid, "\" -> ", fun.lisprepr
+  if "proc" != $fun[0].symbol:
+    warning "calling " & n[0].repr & " not supported"
+  echo n[1].lisprepr, " -> ", n[1].gettype.lisprepr
+  let
+    dt = genDummyTree(n)
+  echo dt.treerepr
+  if dt.idx.len > 0:
+    for i in dt.idx:
+      echo i.repr, " : ", i.gettype.lisprepr
+  echo "<<<< dummyLoopCall"
+
+macro tensorOps*(n: typed): typed =
+  echo "\n>>>> tensorOps"
+  expectKind(n, {nnkStmtList,nnkCall})
+  result = newNimNode(nnkStmtList)
+  if n.kind == nnkCall:
+    result.add n.dummyLoopCall
+  elif n.kind == nnkStmtList:
+    for s in n:
+      if s.kind in nnkCallKinds:
+        result.add s.dummyLoopCall
+      else:
+        hint "skipping: " & s.lisprepr
+        result.add s
+  else:
+    echo "unhandled NimNode: ", n.repr
+  echo result.repr
   echo "<<<< tensorOps"
+  error "stop for now"
 
 when isMainModule:
   type
     Spin = index(1,4)
     Color = index(1,4)
   block:
+    echo "\n* test index types"
     assert(not(Spin is Color), "Spin shouldn't be the same as Color")
     var
       s: Spin
@@ -131,27 +333,53 @@ when isMainModule:
     echo s
 
   block:
+    echo "\n* test static and non static loops"
     var
-      sv: Tensor(float, Spin)
-    unrollfor i, 1, 4:
-      echo "[", i, "]: ", sv[Spin.index i]
+      v, sv: Tensor(float, Spin)
+    echo "  * staticfor"
+    staticfor i, Spin:
+      sv[i] = i * 0.1 + 1.0
+      echo "  [", i, "]: ", sv[i]
+    echo "  * staticforstmt"
+    staticforstmt:
+      for i in Spin:
+        v[i] += i * 10.0 - 10.0
+        v[i] += 100.0
+        echo "  [", i, "]: ", v[i]+`*`(2.0,sv[i])
+        echo "  [", i, "]: ", v[i]+2.0*sv[i]
+    echo "  * non static, but safe"
+    for i in Spin:
+      echo "  [", i, "]: ", sv[i]
 
   block:
+    echo "\n* test arithmatic with indices"
     type
       s2 = index(3, 4)
       c3 = index(0, 2)
     var
       scv: Tensor(float, s2, c3)
-    unrollfor j, 0, 2:
-      unrollfor i, 3, 4:
-        scv[s2.index i, c3.index j] = float i*10+j
-        echo "[", i, ",", j, "]: ", scv[s2.index i, c3.index j]
+    for j in c3:
+      for i in s2:
+        scv[i,j] = float i*10+j
+        echo "[", i, ",", j, "]: ", scv[i,j]
 
-  block:
-    var
-      a, b: dummy(Spin)
-    tensorOps:
-      var
-        x, y: Tensor(float, Spin)
-        m: Tensor(float, Spin, Spin)
-      y[a] = m[a,b] * x[b] + x[a]
+  # block:
+  #   var
+  #     a, b: dummy(Spin)
+  #     x, y: Tensor(float, Spin)
+  #     m: Tensor(float, Spin, Spin)
+  #     mn: float
+  #   tensorOps:
+  #     m[a, Spin.index(1)] = float(a-1)*1.0
+      # m[a, Spin.index(2)] = float(a-1)*0.1
+      # m[a, Spin.index(3)] = float(a-1)*0.01
+      # m[a, Spin.index(4)] = float(a-1)*0.001
+      # echo "m[", a, ",", b, "] = ", m[a,b]
+      # mn = m[a,b] * m[a,b]
+      # echo "m.norm2 = ", mn
+      # x[a] = float a - 1
+      # echo "x[", a, "] = ", x[a]
+      # y[a] = m[a,b] * x[b] + x[a]
+      # echo "y[", a, "] = ", y[a]
+      # y[a] += x[a]
+      # echo "y[", a, "] = ", y[a]
