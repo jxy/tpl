@@ -62,9 +62,9 @@ proc convert(n: NimNode, i: NimNode, j: NimNode): NimNode =
             nnn.add result.nn[i]
           result.nn = nnn
         for i in 0..<result.nn.len:
-          # if result.nn[i].kind in CallNodes:
+          # if result.nn[i].kind in CallNodes+{nnkIfExpr}:
           # If we need more par, try the above line first.
-          if result.nn[i].kind in {nnkInfix, nnkCall}:
+          if result.nn[i].kind in {nnkInfix, nnkCall, nnkIfExpr}:
             result.nn[i] = newPar(result.nn[i])
       elif result.nn.kind == nnkHiddenDeref:
         result.nn = result.nn[0]
@@ -147,7 +147,7 @@ iterator items*[id,lo,hi:static[int]](t: typedesc[gTindex[id,lo,hi]]): t =
     inc i.i
     yield i
 proc `$`[id,lo,hi:static[int]](x: gTindex[id,lo,hi]): string =
-  "gTindex[" & $id & "," & $lo & "," & $hi & "] = " & $x.i
+  $x.i & ":Idx[" & $id & "," & $lo & "," & $hi & "]"
 var IndexID {.compileTime.} = 0
 proc nextIndexID: int {.compileTime.} =
   result = IndexID
@@ -207,8 +207,22 @@ proc `[]=`*[V;id1,lo1,hi1,id2,lo2,hi2:static[int]](x: var gT2[V,id1,lo1,hi1,id2,
 type
   gTindexDummy[id,lo,hi:static[int]] = object
 
-proc `+`*(x: gTindexDummy, y: int): int = discard
-proc `-`*(x: gTindexDummy, y: int): int = discard
+template genDummyOp(op: untyped): stmt =
+  proc op*[T](x: gTindexDummy, y: T): T = discard
+  proc op*[T](x: T, y: gTindexDummy): T = discard
+macro genDummyOps(ops: varargs[untyped]): stmt =
+  result = newNimNode(nnkStmtList)
+  for o in ops:
+    result.add newCall(bindsym"genDummyOp", o)
+template genDummyOpB(op: untyped): stmt =
+  proc op*[T](x: gTindexDummy, y: T): bool = discard
+  proc op*[T](x: T, y: gTindexDummy): bool = discard
+macro genDummyOpBs(ops: varargs[untyped]): stmt =
+  result = newNimNode(nnkStmtList)
+  for o in ops:
+    result.add newCall(bindsym"genDummyOpB", o)
+genDummyOps(`+`, `-`, `*`, `/`)
+genDummyOpBs(`==`, `>=`)
 
 template Dummy*[id,lo,hi:static[int]](t: typedesc[gTindex[id,lo,hi]]): expr =
   gTindexDummy[id,lo,hi]
@@ -298,13 +312,13 @@ proc genDummyTree(n: NimNode): dummyTree =
   # echo "<<<< genDummytree"
 proc dummyLoopCall(n: NimNode): NimNode =
   echo "\n>>>> dummyLoopCall"
-  expectKind(n, nnkCallKinds)
+  expectKind(n, nnkCallKinds+{nnkAsgn})
   echo n.treerepr
   let
     fun = n[0].gettype
     fid = ident($n[0].symbol)
   echo '"', fid, "\" -> ", fun.lisprepr
-  if "proc" != $fun[0].symbol:
+  if fun.kind != nnkSym and "proc" != $fun[0].symbol:
     warning "calling " & n[0].repr & " not supported"
   echo n[1].lisprepr, " -> ", n[1].gettype.lisprepr
   let
@@ -320,20 +334,18 @@ proc dummyLoopCall(n: NimNode): NimNode =
       type T = IndexType(`i`)
       for `id` in T:
         `body`
-    # result = newNimNode(nnkForStmt).add(id,ty,result.convert(i, id)) # convert SIGSEGV
-    # result = newCall(!"staticfor",id,ty,result.replace(i, id))
   echo result.treerepr
   echo "<<<< dummyLoopCall"
 
 macro tensorOps*(n: typed): typed =
   echo "\n>>>> tensorOps"
-  expectKind(n, {nnkStmtList,nnkCall})
+  expectKind(n, {nnkStmtList,nnkAsgn}+nnkCallKinds)
   result = newNimNode(nnkStmtList)
-  if n.kind == nnkCall:
+  if n.kind in {nnkCall,nnkAsgn}:
     result.add n.dummyLoopCall
   elif n.kind == nnkStmtList:
     for s in n:
-      if s.kind in nnkCallKinds:
+      if s.kind in nnkCallKinds+{nnkAsgn}:
         result.add s.dummyLoopCall
       else:
         hint "skipping: " & s.lisprepr
@@ -417,26 +429,23 @@ when isMainModule:
       mn += m[i,i]
       echo "  mn = ", mn
     echo "\n  * test for dummy" # Not working
-    # for i in type(a):
-    # type T = undummy(a)
-    # for i in T:
-    # for i in IndexType(a):
-    type T = IndexType(a)
-    for i in T:
-      m[i, Spin.index(1)] = (i-1.0)*1.0
-      echo "  m[",i,",1] = ",m[i,Spin.index(1)]
+    block:
+      type T = IndexType(a)     # We need to name it to use the type
+      for i in T:
+        m[i, Spin.index(1)] = (i-1.0)*1.0
+        echo "  m[",i,",1] = ",m[i,Spin.index(1)]
     echo "\n  * test auto loop dummy"
     tensorOps:
-      m[a, Spin.index(1)] = float(a-1)*1.0
-      m[a, Spin.index(2)] = float(a-1)*0.1
-      m[a, Spin.index(3)] = float(a-1)*0.01
-      m[a, Spin.index(4)] = float(a-1)*0.001
+      m[a, Spin.index(1)] = (a-1.0)*1.0
+      m[a, Spin.index(2)] = (a-1.0)*0.1
+      m[a, Spin.index(3)] = (a-1.0)*0.01
+      m[a, Spin.index(4)] = (a-1.0)*0.001
       echo "  m[", a, ",", b, "] = ", m[a,b]
-      # mn = m[a,b] * m[a,b]
-      # echo "m.norm2 = ", mn
-      # x[a] = float a - 1
-      # echo "x[", a, "] = ", x[a]
-      # y[a] = m[a,b] * x[b] + x[a]
-      # echo "y[", a, "] = ", y[a]
-      # y[a] += x[a]
-      # echo "y[", a, "] = ", y[a]
+      mn = m[a,b] * m[a,b]
+      echo "  m.norm2 = ", mn
+      x[a] = if a == 1: 1.0 elif a == 2: 0.001 elif a == 3: 0.000001 else: 0.000000001
+      echo "  x[", a, "] = ", x[a]
+      y[a] = m[a,b] * x[b] + x[a]
+      echo "  y[", a, "] = ", y[a]
+      y[a] += 1.0 + x[b] * m[b,a]
+      echo "  y[", a, "] = ", y[a]
