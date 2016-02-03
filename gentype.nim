@@ -231,7 +231,7 @@ macro staticforstmt(n: typed): untyped =
   let
     t = n[1][1]
     i = n[0]
-    id = ident"__i"
+    id = ident("__" & $i.symbol)
     ii = newCall(!"index", t, id)
     s = convert(n[2], i, ii)
   result = quote do:
