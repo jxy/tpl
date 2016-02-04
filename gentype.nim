@@ -17,21 +17,19 @@ proc replace(n: NimNode, i: NimNode, j: NimNode): NimNode =
   # echo result.lisprepr
   # echo "<<<< replace"
 proc convert(n: NimNode, i: NimNode, j: NimNode): NimNode =
-  echo "\n>>>> convert"
-  echo n.treerepr
-  echo i.treerepr
-  echo j.treerepr
+  # echo "\n>>>> convert"
+  # echo n.treerepr
+  # echo i.treerepr
+  # echo j.treerepr
   proc go(n: NimNode, i: NimNode, j: NimNode): tuple[rep: bool, nn: NimNode] =
-    echo "  ==== go : ", n.lisprepr
+    # echo "  ==== go : ", n.lisprepr
     if n == i:
       result = (true, j)
     else:
       result.rep = false
       result.nn = n.copyNimNode
       for c in n:
-        echo "   {{       ", c.kind
         let cc = c.go(i,j)
-        echo "   }}"
         result.nn.add cc.nn
         if cc.rep:
           result.rep = true
@@ -63,8 +61,8 @@ proc convert(n: NimNode, i: NimNode, j: NimNode): NimNode =
           result.nn = nnn
         for i in 0..<result.nn.len:
           # if result.nn[i].kind in CallNodes+{nnkIfExpr}:
-          # If we need more par, try the above line first.
-          if result.nn[i].kind in {nnkInfix, nnkCall, nnkIfExpr}:
+          # If we need more par, try the above line first, with more node kinds.
+          if result.nn[i].kind in {nnkPrefix, nnkInfix, nnkCall, nnkIfExpr}:
             result.nn[i] = newPar(result.nn[i])
       elif result.nn.kind == nnkHiddenDeref:
         result.nn = result.nn[0]
@@ -73,14 +71,14 @@ proc convert(n: NimNode, i: NimNode, j: NimNode): NimNode =
         for i in 1..<result.nn.len:
           nnn.add result.nn[i]
         result.nn = nnn
-    echo "       repr : ", result.rep
-    echo "       node : ", result.nn.lisprepr
+    # echo "       repr : ", result.rep
+    # echo "       node : ", result.nn.lisprepr
   result = go(n,i,j).nn
-  echo result.treerepr
-  echo "<<<< convert"
+  # echo result.treerepr
+  # echo "<<<< convert"
 macro unrollfor(i: untyped, lo, hi: int, n: untyped): stmt =
-  echo "\n>>>> unrollfor"
-  echo n.treerepr
+  # echo "\n>>>> unrollfor"
+  # echo n.treerepr
   result = newNimNode(nnkStmtList)
   template staticint(x): expr =
     intVal if x.kind == nnkSym: x.symbol.getImpl else: x
@@ -89,9 +87,9 @@ macro unrollfor(i: untyped, lo, hi: int, n: untyped): stmt =
     hh = staticint hi
   for j in ll..hh:
     result.add(n.replace(i, newLit(j)))
-  echo result.treerepr
-  echo result.repr
-  echo "<<<< unrollfor"
+  # echo result.treerepr
+  # echo result.repr
+  # echo "<<<< unrollfor"
 
 ####################
 # seqset
@@ -222,7 +220,7 @@ macro genDummyOpBs(ops: varargs[untyped]): stmt =
   for o in ops:
     result.add newCall(bindsym"genDummyOpB", o)
 genDummyOps(`+`, `-`, `*`, `/`)
-genDummyOpBs(`==`, `>=`)
+genDummyOpBs(`==`, `<`, `<=`)
 
 template Dummy*[id,lo,hi:static[int]](t: typedesc[gTindex[id,lo,hi]]): expr =
   gTindexDummy[id,lo,hi]
@@ -254,13 +252,13 @@ template staticfor[id,lo,hi:static[int]](i: untyped, t: typedesc[gTindexDummy[id
   type T = gTindex[id,lo,hi]
   staticfor(i,T,n)
 macro staticforbody(i: untyped, j: int, t: untyped, n: untyped): untyped =
-  echo "\n>>>> staticfor"
+  # echo "\n>>>> staticfor"
   let
     ix = newCall(bindsym"index", t, j)
   result = replace(n, i, ix)
-  echo result.treerepr
-  echo result.repr
-  echo "<<<< staticfor"
+  # echo result.treerepr
+  # echo result.repr
+  # echo "<<<< staticfor"
 macro staticforstmt(n: typed): untyped =
   # echo "\n>>>> staticforstmt"
   # echo n.treerepr
@@ -310,17 +308,9 @@ proc genDummyTree(n: NimNode): dummyTree =
       result.idx += t.idx
       result.branch[i] = t
   # echo "<<<< genDummytree"
-proc dummyLoopCall(n: NimNode): NimNode =
-  echo "\n>>>> dummyLoopCall"
-  expectKind(n, nnkCallKinds+{nnkAsgn})
+proc dummyLoop(n: NimNode): NimNode =
+  echo "\n>>>> dummyLoop"
   echo n.treerepr
-  let
-    fun = n[0].gettype
-    fid = ident($n[0].symbol)
-  echo '"', fid, "\" -> ", fun.lisprepr
-  if fun.kind != nnkSym and "proc" != $fun[0].symbol:
-    warning "calling " & n[0].repr & " not supported"
-  echo n[1].lisprepr, " -> ", n[1].gettype.lisprepr
   let
     dt = genDummyTree(n)
   echo dt.treerepr
@@ -335,24 +325,18 @@ proc dummyLoopCall(n: NimNode): NimNode =
       for `id` in T:
         `body`
   echo result.treerepr
-  echo "<<<< dummyLoopCall"
+  echo "<<<< dummyLoop"
 
 macro tensorOps*(n: typed): typed =
   echo "\n>>>> tensorOps"
-  expectKind(n, {nnkStmtList,nnkAsgn}+nnkCallKinds)
   result = newNimNode(nnkStmtList)
-  if n.kind in {nnkCall,nnkAsgn}:
-    result.add n.dummyLoopCall
-  elif n.kind == nnkStmtList:
+  if n.kind == nnkStmtList:
     for s in n:
-      if s.kind in nnkCallKinds+{nnkAsgn}:
-        result.add s.dummyLoopCall
-      else:
-        hint "skipping: " & s.lisprepr
-        result.add s
+      result.add s.dummyLoop
   else:
-    echo "unhandled NimNode: ", n.repr
-  echo result.treerepr
+    result.add n.dummyLoop
+  # echo result.treerepr
+  echo result.repr
   echo "<<<< tensorOps"
 
 when isMainModule:
@@ -446,7 +430,22 @@ when isMainModule:
       m[a, Spin.index(2)] = (a-1.0)*0.1
       m[a, Spin.index(3)] = (a-1.0)*0.01
       m[a, Spin.index(4)] = (a-1.0)*0.001
-      echo "  m[", a, ",", b, "] = ", m[a,b]
+      var s = ""
+      block:
+        if a == 1:
+          s = "  "
+          if b == 1:
+            s &= "m = [["
+          else:
+            s &= "      "
+        s &= "\t" & $m[a,b]
+        if a < 4:
+          s &= ","
+        else:
+          s &= "\t]"
+          if b == 4:
+            s &= "]"
+          echo s
       mn = m[a,b] * m[a,b]
       echo "  m.norm2 = ", mn
       x[a] = if a == 1: 1.0 elif a == 2: 0.001 elif a == 3: 0.000001 else: 0.000000001
