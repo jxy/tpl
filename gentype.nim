@@ -424,15 +424,21 @@ when isMainModule:
     mn = 0
     staticfor i, type(a):
       m[i, Spin.index(2)] = (i-1.0)*0.1
-    staticfor i, type(a):
       echo "  m[",i,",2] = ",m[i,Spin.index(2)]
       mn += m[i,i]
       echo "  mn = ", mn
-    echo "\n  * test for dummy" # Not working
+    echo "\n  * test staticforstmt dummy"
+    block:
+      type T = IndexType(a)     # We need to name it to use the type
+      staticforstmt:
+        for i in T:
+          m[i, Spin.index(1)] = (i-1.0)*1.0
+          echo "  m[",i,",1] = ",m[i,Spin.index(1)]
+    echo "\n  * test for dummy"
     block:
       type T = IndexType(a)     # We need to name it to use the type
       for i in T:
-        m[i, Spin.index(1)] = (i-1.0)*1.0
+        m[i, Spin.index(1)] = m[i, Spin.index(1)] + 100.0
         echo "  m[",i,",1] = ",m[i,Spin.index(1)]
     echo "\n  * test auto loop dummy"
     tensorOps:
