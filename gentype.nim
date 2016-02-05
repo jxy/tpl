@@ -486,3 +486,20 @@ when isMainModule:
       echo "  y = ", y
       y[a] += 1.0 + x[b] * m[b,a]
       echo "  y = ", y
+
+  block:
+    echo "\n* test complex"
+    type
+      cix = enum re, im
+      cT = IndexType(re.ord,im.ord)
+      C = Tensor(float, cT)
+      Color = IndexType(0,2)
+      cm = Tensor(C, Color, Color)
+    var
+      mu, nu: Color.Dummy
+      c: C
+      m: cm
+    tensorOps:
+      c[re.ord.index(cT)] = 1
+      m[mu,mu] = c
+    echo m
