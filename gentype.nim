@@ -199,6 +199,8 @@ proc `[]`*[V;id1,lo1,hi1:static[int]](x: var gT1[V,id1,lo1,hi1], i1: gTindex[id1
   x.data[i1.i]
 proc `[]`*[V;id1,lo1,hi1,id2,lo2,hi2:static[int]](x: gT2[V,id1,lo1,hi1,id2,lo2,hi2], i1: gTindex[id1,lo1,hi1], i2: gTindex[id2,lo2,hi2]): V {.inline.} =
   x.data[i2.i][i1.i]
+proc `[]`*[V;id1,lo1,hi1,id2,lo2,hi2:static[int]](x: var gT2[V,id1,lo1,hi1,id2,lo2,hi2], i1: gTindex[id1,lo1,hi1], i2: gTindex[id2,lo2,hi2]): var V {.inline.} =
+  x.data[i2.i][i1.i]
 proc `[]=`*[V;id1,lo1,hi1:static[int]](x: var gT1[V,id1,lo1,hi1], i1: gTindex[id1,lo1,hi1], y: V) {.inline.} =
   x.data[i1.i] = y
 proc `[]=`*[V;id1,lo1,hi1,id2,lo2,hi2:static[int]](x: var gT2[V,id1,lo1,hi1,id2,lo2,hi2], i1: gTindex[id1,lo1,hi1], i2: gTindex[id2,lo2,hi2], y: V) {.inline.} =
@@ -488,18 +490,16 @@ when isMainModule:
       echo "  y = ", y
 
   block:
-    echo "\n* test complex"
+    echo "\n* test nested"
     type
-      cix = enum re, im
-      cT = IndexType(re.ord,im.ord)
-      C = Tensor(float, cT)
+      inT = IndexType(0,3)
+      In = Tensor(float, inT)
       Color = IndexType(0,2)
-      cm = Tensor(C, Color, Color)
+      cm = Tensor(In, Color, Color)
     var
+      i: inT.Dummy
       mu, nu: Color.Dummy
-      c: C
       m: cm
     tensorOps:
-      c[re.ord.index(cT)] = 1
-      m[mu,mu] = c
+      m[mu,nu][i] = 1.0*i*nu
     echo m
