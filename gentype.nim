@@ -154,14 +154,14 @@ proc nextIndexID: int {.compileTime.} =
 template IndexType*(lo, hi: int): expr =
   type Index = gTindex[nextIndexID(),lo,hi]
   Index
-proc staticInbound(n, lo, hi: static[int]) {.inline.} =
+template staticInbound(n, lo, hi: static[int]): expr =
   static:
     if n < lo or n > hi:
       error "index out of bounds: " & $n
 proc index*[id,lo,hi:static[int]](t:typedesc[gTindex[id,lo,hi]], n:static[int]): t {.inline.} =
   n.staticInbound lo, hi
   t(i: n)
-proc index*(n:static[int], t:typedesc): t {.inline.} =
+template index*(n:static[int], t:typedesc): expr =
   index(t, n)
 proc `index=`*[id,lo,hi:static[int]](ix:var gTindex[id,lo,hi], n:static[int]) {.inline.} =
   n.staticInbound lo, hi
@@ -216,9 +216,16 @@ converter dummy2float*[id,lo,hi:static[int]](i: gTindexDummy[id,lo,hi]): float {
 template Dummy*[id,lo,hi:static[int]](t: typedesc[gTindex[id,lo,hi]]): expr =
   type Dummy = gTindexDummy[id,lo,hi]
   Dummy
-template IndexType*[id,lo,hi:static[int]](t: gTindexDummy[id,lo,hi]): expr =
+template IndexType[id,lo,hi:static[int]](t: gTindexDummy[id,lo,hi]): expr =
   type Index = gTindex[id,lo,hi]
   Index
+iterator items*[id,lo,hi:static[int]](t: gTindexDummy[id,lo,hi]): auto =
+  type Index = IndexType(t)
+  var i = Index(i: lo)
+  yield i
+  while i.i < hi:
+    inc i.i
+    yield i
 macro choice(n: int, v: varargs[expr]): expr =
   let i = n.staticint.int
   if i >= 1 and i <= v.len:
@@ -234,6 +241,8 @@ template IndexType*[V;id1,lo1,hi1,id2,lo2,hi2:static[int]](t: gT2[V,id1,lo1,hi1,
     Index1 = gTindex[id1,lo1,hi1]
     Index2 = gTindex[id2,lo2,hi2]
   choice(n, Index1, Index2)
+template index*[id,lo,hi:static[int]](d:gTindexDummy[id,lo,hi], n:static[int]): expr =
+  index(IndexType(d), n)
 
 proc `[]`*[V;id1,lo1,hi1:static[int]](x: gT1[V,id1,lo1,hi1], i1: gTindexDummy[id1,lo1,hi1]): V {.nodecl.} = discard
 proc `[]`*[V;id1,lo1,hi1:static[int]](x: var gT1[V,id1,lo1,hi1], i1: gTindexDummy[id1,lo1,hi1]): var V {.nodecl.} = discard
@@ -329,8 +338,7 @@ proc dummyLoop(n: NimNode): NimNode =
       id = ident("__" & $i.symbol)
       body = result.convert(i, id)
     result = quote do:
-      type T = IndexType(`i`)
-      for `id` in T:
+      for `id` in `i`:
         `body`
   echo result.treerepr
   echo "<<<< dummyLoop"
@@ -465,15 +473,13 @@ when isMainModule:
       echo "  mn = ", mn
     echo "\n  * test staticforstmt dummy"
     block:
-      type T = IndexType(a)     # We need to name it to use the type
       staticforstmt:
-        for i in T:
+        for i in a:             # Dummy works as loop range
           m[i, Spin.index(1)] = (i-1.0)*1.0
           echo "  m[",i,",1] = ",m[i,Spin.index(1)]
     echo "\n  * test for dummy"
     block:
-      type T = IndexType(a)     # We need to name it to use the type
-      for i in T:
+      for i in a:               # Dummy works as loop range
         m[i, Spin.index(1)] = m[i, Spin.index(1)] + 100.0
         echo "  m[",i,",1] = ",m[i,Spin.index(1)]
     echo "\n  * test auto loop dummy"
