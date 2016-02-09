@@ -141,10 +141,10 @@ converter idx2int*[id,lo,hi:static[int]](i: gTindex[id,lo,hi]): int = i.i
 converter idx2float*[id,lo,hi:static[int]](i: gTindex[id,lo,hi]): float = i.i.float
 iterator items*[id,lo,hi:static[int]](t: typedesc[gTindex[id,lo,hi]]): t =
   var i = t(i: lo)
-  yield i
-  while i.i < hi:
-    inc i.i
+  while true:
     yield i
+    if i.i == hi: break
+    inc i.i
 proc `$`[id,lo,hi:static[int]](x: gTindex[id,lo,hi]): string =
   $x.i & ":Idx[" & $id & "," & $lo & "," & $hi & "]"
 var IndexID {.compileTime.} = 0
@@ -222,10 +222,10 @@ template IndexType[id,lo,hi:static[int]](t: gTindexDummy[id,lo,hi]): expr =
 iterator items*[id,lo,hi:static[int]](t: gTindexDummy[id,lo,hi]): auto =
   type Index = IndexType(t)
   var i = Index(i: lo)
-  yield i
-  while i.i < hi:
-    inc i.i
+  while true:
     yield i
+    if i.i == hi: break
+    inc i.i
 macro choice(n: int, v: varargs[expr]): expr =
   let i = n.staticint.int
   if i >= 1 and i <= v.len:
@@ -268,6 +268,8 @@ template staticfor[id,lo,hi:static[int]](i: untyped, t: typedesc[gTindex[id,lo,h
 template staticfor[id,lo,hi:static[int]](i: untyped, t: typedesc[gTindexDummy[id,lo,hi]], n: untyped): expr =
   type Index = gTindex[id,lo,hi]
   staticfor(i,Index,n)
+template staticfor[id,lo,hi:static[int]](i: untyped, d: gTindexDummy[id,lo,hi], n: untyped): expr =
+  staticfor(i,d.type,n)
 macro staticforbody(i: untyped, j: int, t: untyped, n: untyped): untyped =
   # echo "\n>>>> staticfor"
   let
@@ -466,7 +468,7 @@ when isMainModule:
     echo "\n* test dummy"
     echo "\n  * test staticfor dummy"
     mn = 0
-    staticfor i, type(a):
+    staticfor i, a:
       m[i, Spin.index(2)] = (i-1.0)*0.1
       echo "  m[",i,",2] = ",m[i,Spin.index(2)]
       mn += m[i,i]
