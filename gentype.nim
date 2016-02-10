@@ -390,7 +390,7 @@ proc `$`*(m: gT2): string =
         if j == j.type.lo:
           s &= "[[ "
         else:
-          s &= "\n   "
+          s &= "\n [ "
       else:
         s &= "\t"
       s &= $m[i,j]
