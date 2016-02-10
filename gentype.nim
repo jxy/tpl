@@ -300,13 +300,14 @@ type
     idx: seqset[NimNode]
     branch: seq[dummyTree]
 proc treerepr(t: dummyTree): string {.compileTime.} =
+  proc `$`(s: seqset[NimNode]): string =
+    result = "["
+    for i in s:
+      result &= $i & ","
+    if ',' == result[^1]: result[^1] = ']'
+    else: result &= "]"
   proc go(t: dummyTree, pre: string): string =
-    var idx = "["
-    for i in t.idx:
-      idx &= " " & $i & ","
-    if ',' == idx[^1]: idx[^1] = ' '
-    idx &= "]"
-    result = pre & idx & "\n"
+    result = pre & $t.idx & "\n"
     if t.branch.len > 0:
       for i in t.branch:
         result &= go(i, pre & "  ")
