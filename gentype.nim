@@ -287,7 +287,7 @@ macro staticforstmt(n: typed): untyped =
   let
     t = n[1][1]
     i = n[0]
-    id = ident("__" & $i.symbol)
+    id = gensym(nskForVar, "__" & $i.symbol)
     ii = newCall(bindsym"index", t, id)
     s = convert(n[2], i, ii)
   result = quote do:
@@ -337,7 +337,7 @@ proc dummyLoop(n: NimNode): NimNode =
   for i in dt.idx:
     echo i.repr, " : ", i.gettype.lisprepr
     let
-      id = ident("__" & $i.symbol)
+      id = gensym(nskForVar, "__" & $i.symbol)
       body = result.convert(i, id)
     result = quote do:
       for `id` in `i`:
