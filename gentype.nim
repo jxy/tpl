@@ -1,7 +1,7 @@
 import macros
 import math
 
-iterator pairs(n: NimNode): tuple[key: int, val: NimNode] =
+iterator pairs(n: NimNode): (int, NimNode) =
   for i in 0..<n.len:
     yield(i, n[i])
 proc replace(n: NimNode, i: NimNode, j: NimNode): NimNode =
@@ -53,13 +53,14 @@ proc convert(n: NimNode, i: NimNode, j: NimNode): NimNode =
               result.nn.add c
           else:
             result.nn[i] = nnn
-      if result.nn.kind in CallNodes and result.nn[0].kind == nnkSym:
-        result.nn[0] = ident($result.nn[0].symbol)
-        if "[]" == $result.nn[0]:
-          var nnn = newNimNode(nnkBracketExpr)
-          for i in 1..<result.nn.len:
-            nnn.add result.nn[i]
-          result.nn = nnn
+      if result.nn.kind in CallNodes:
+        if result.nn[0].kind == nnkSym:
+          result.nn[0] = ident($result.nn[0].symbol)
+          if "[]" == $result.nn[0]:
+            var nnn = newNimNode(nnkBracketExpr)
+            for i in 1..<result.nn.len:
+              nnn.add result.nn[i]
+            result.nn = nnn
         for i in 0..<result.nn.len:
           # if result.nn[i].kind in CallNodes+{nnkIfExpr}:
           # If we need more par, try the above line first, with more node kinds.
@@ -101,6 +102,9 @@ proc len(s: seqset): auto = s.s.len
 iterator items[T](s: seqset[T]): T =
   for i in s.s:
     yield i
+iterator pairs[T](s: seqset[T]): (int, T) =
+  for i, j in s.s:
+    yield (i, j)
 proc contains[T](s: seqset[T], x: T): bool =
   for i in s:
     if x == i:
@@ -226,6 +230,15 @@ iterator items*[id,lo,hi:static[int]](t: gTindexDummy[id,lo,hi]): auto =
     yield i
     if i.i == hi: break
     inc i.i
+template head*[id,lo,hi:static[int]](t: gTindexDummy[id,lo,hi]): expr =
+  index(IndexType(t), lo)
+iterator tail*[id,lo,hi:static[int]](t: gTindexDummy[id,lo,hi]): auto =
+  type Index = IndexType(t)
+  var i = Index(i: lo+1)
+  while true:
+    yield i
+    if i.i == hi: break
+    inc i.i
 macro choice(n: int, v: varargs[expr]): expr =
   let i = n.staticint.int
   if i >= 1 and i <= v.len:
@@ -328,23 +341,116 @@ proc genDummyTree(n: NimNode): dummyTree =
       result.idx += t.idx
       result.branch[i] = t
   # echo "<<<< genDummytree"
-proc dummyLoop(n: NimNode): NimNode =
-  echo "\n>>>> dummyLoop"
-  echo n.treerepr
-  let
-    dt = genDummyTree(n)
-  echo dt.treerepr
+proc isVarArg(n: NimNode): bool =
+  n.kind == nnkBracketExpr and $n[0].symbol == "var"
+proc localDummyAt(ds: seq[dummyTree], i: int): seqset[NimNode] =
+  result = ds[i].idx
+  for n in 0..<ds.len:
+    if n != i:
+      result.excl ds[n].idx
+const autoSumFunctionNames = ["=", "+=", "-=", "[]="]
+const autoSumFunctionNamesAsgn = ["=", "[]="]
+proc requireAutoSum(n: NimNode, dt: dummyTree): bool =
+  proc isAsgnCall(n: NimNode): bool =
+    if n.kind in CallNodes:
+      let
+        f = n[0].gettype      # the function type
+        fname = $n[0].symbol  # the function name
+        firstArg = f[2]
+      var restArgHasVar = false
+      for i in 3..<f.len:
+        if f[i].isVarArg:
+          restArgHasVar = true
+          break
+      return fname in autoSumFunctionNames and
+        firstArg.isVarArg and not restArgHasVar
+    else:
+      return false
+  let lastLocalDummy = localDummyAt(dt.branch, dt.branch.len-1)
+  return (n.kind == nnkAsgn or n.isAsgnCall) and lastLocalDummy.len > 0
+proc dummyLoopGen(n: NimNode, ix: seqset[NimNode]): NimNode =
   result = n.copy
-  for i in dt.idx:
+  for i in ix:
     echo i.repr, " : ", i.gettype.lisprepr
     let
       id = gensym(nskForVar, "__" & $i.symbol)
       body = result.convert(i, id)
-    result = quote do:
-      for `id` in `i`:
-        `body`
-  echo result.treerepr
-  echo "<<<< dummyLoop"
+    result = newNimNode(nnkForStmt).add(id, i, body)
+proc accumLoopGen(accumIx: seqset[NimNode], asgn: NimNode, accum: NimNode): NimNode =
+  var
+    asgnLoop = asgn
+    accumLoops = newseq[NimNode](accumIx.len)
+  for n in 0..<accumLoops.len:
+    accumLoops[n] = accum
+  for n, i in accumIx:
+    let
+      ihead = newCall(ident"head", i)
+      id = gensym(nskForVar, "__" & $i.symbol)
+    asgnLoop = asgnLoop.convert(i, ihead)
+    for m in 0..<accumLoops.len:
+      if m > n:
+        accumLoops[m] = newNimNode(nnkForStmt).add(id, i, accumLoops[m].convert(i, id))
+      elif m == n:
+        accumLoops[m] = newNimNode(nnkForStmt).add(id, newCall(ident"tail", i), accumLoops[m].convert(i, id))
+      else:
+        accumLoops[m] = accumLoops[m].convert(i, ihead)
+  result = newNimNode(nnkStmtList).add asgnLoop
+  for n in accumLoops:
+    result.add(n)
+proc autoSum(n: NimNode, dt: dummyTree): NimNode =
+  echo "\n>>>> autoSum"
+  echo n.treerepr
+  echo n.repr
+  proc getlhsix(s: seq[dummyTree]): seqset[NimNode] =
+    result.init
+    for i in 0..<s.len-1: # Every but last belongs to the left hand side.
+      result.incl s[i].idx
+  let
+    rhs = n[^1]              # Last child is the right hand side.
+    rhsDT = dt.branch[^1]
+    rhsIx = rhsDT.idx
+    lhsIx = getlhsix(dt.branch)
+    rhsLocalIx = dt.idx - lhsIx
+    lhsLocalIx = dt.idx - rhsIx
+    sharedIx = lhsIx - lhsLocalIx
+    sharedIxLoop = n.dummyLoopGen sharedIx
+  if rhs.kind in CallNodes:
+    for i in 1..<rhs.len:
+      let localIx = localDummyAt(rhsDT.branch, i) - sharedIx
+      if localIx.len > 0:
+        error "subExpr autoSum not implemented"
+  if n.kind == nnkAsgn or $n[0].symbol in autoSumFunctionNamesAsgn:
+    var accum: NimNode
+    if n.kind == nnkAsgn:
+      accum = infix(n[0], "+=", n[1])
+    elif $n[0].symbol == "[]=":
+      var bracket = newNimNode(nnkBracketExpr)
+      for i in 1..<n.len-1:
+        bracket.add n[i]
+      accum = infix(bracket, "+=", n[^1])
+    result = accumLoopGen(rhsLocalIx, sharedIxLoop, accum.dummyLoopGen(sharedIx))
+  else:
+    result = sharedIxLoop.dummyLoopGen(rhsLocalIx)
+  echo "autoSum generated tree:\n" & result.treerepr
+  hint "autoSum generated code:\n" & result.repr
+  if lhsLocalIx.len > 0:
+    error "lhsLocalIx autoSum not implemented"
+  echo "<<<< autoSum"
+proc dummyLoop(n: NimNode): NimNode =
+  # echo "\n>>>> dummyLoop"
+  # echo n.treerepr
+  let
+    dt = genDummyTree(n)
+  # echo dt.treerepr
+  if dt.idx.len > 0:
+    if n.requireAutoSum dt:
+      result = n.autoSum dt
+    else:
+      result = n.dummyLoopGen dt.idx
+  else:
+    result = n
+  # echo result.treerepr
+  # echo "<<<< dummyLoop"
 
 macro tensorOps*(n: typed): typed =
   echo "\n>>>> tensorOps"
@@ -489,15 +595,39 @@ when isMainModule:
     tensorOps:
       m[a, b] = (a-1.0)*10.0/float(10^b)
       echo "  m =\n", m
-      mn = m[a,b] * m[a,b]
-      echo "  m.norm2 = ", mn
       x[a] = if a == 1: 1.0 elif a == 2: 1e-2 elif a == 3: 1e-4 else: 1e-6
       echo "  x = ", x
-      y[a] = m[a,b] * x[b] + x[a]
-      echo "  y = ", y
-      y[a] += 1.0 + x[b] * m[b,a]
-      echo "  y = ", y
+    echo "\n  * test auto sum"
+    var
+      c, d: a.type
+      X, I: Tensor(float, Spin, Spin)
+    tensorOps:
+      I[a,a] = 1.0
+      echo "  I =\n", I
+    tensorOps:
+      mn = 0
+      mn += I[a,b]*I[b,a]
+      echo "  I_ab I_ba = ", mn
+      X[a,b] = I[a,c]*m[c,b]
+      echo "  X_ab = I_ac m_cb =\n", X
+      mn = I[a,b]*m[b,a]
+      echo "  I_ab m_ba = ", mn
+      y[b] = m[a,b]
+      echo "  y_b = m_ab = ", y
+      x[a] = m[a,b]*y[b]
+      echo "  x_a = m_ab y_b = ", x
+      mn = m[a,b] * m[a,b]
+      echo "  m.norm2 = ", mn
+      # X[a,b] = m[a,c]*I[c,a]
+      # echo "  X_ab = m_ac I_ca =\n", X
+      # X[a,b] = I[b,c]*x[c]*(m[c,d]*y[d])
+      # echo "  X =\n", X
+      # y[a] = m[a,b] * x[b] + x[a]
+      # echo "  y = ", y
+      # y[a] += 1.0 + x[b] * m[b,a]
+      # echo "  y = ", y
 
+#[
   block:
     echo "\n* test nested"
     type
@@ -512,3 +642,4 @@ when isMainModule:
     tensorOps:
       m[mu,nu][i] = 1.0*i*nu
     echo m
+]#
