@@ -165,7 +165,7 @@ template staticInbound(n, lo, hi: static[int]): expr =
 proc index*[id,lo,hi:static[int]](t:typedesc[gTindex[id,lo,hi]], n:static[int]): t {.inline.} =
   n.staticInbound lo, hi
   t(i: n)
-template index*(n:static[int], t:typedesc): expr =
+template index*[id,lo,hi:static[int]](n:int, t:typedesc[gTindex[id,lo,hi]]): expr =
   index(t, n)
 proc `index=`*[id,lo,hi:static[int]](ix:var gTindex[id,lo,hi], n:static[int]) {.inline.} =
   n.staticInbound lo, hi
@@ -220,9 +220,11 @@ converter dummy2float*[id,lo,hi:static[int]](i: gTindexDummy[id,lo,hi]): float {
 template Dummy*[id,lo,hi:static[int]](t: typedesc[gTindex[id,lo,hi]]): expr =
   type Dummy = gTindexDummy[id,lo,hi]
   Dummy
-template IndexType[id,lo,hi:static[int]](t: gTindexDummy[id,lo,hi]): expr =
+template IndexType[id,lo,hi:static[int]](t: typedesc[gTindexDummy[id,lo,hi]]): expr =
   type Index = gTindex[id,lo,hi]
   Index
+template IndexType[id,lo,hi:static[int]](t: gTindexDummy[id,lo,hi]): expr =
+  t.type.IndexType
 iterator items*[id,lo,hi:static[int]](t: gTindexDummy[id,lo,hi]): auto =
   type Index = IndexType(t)
   var i = Index(i: lo)
@@ -231,7 +233,8 @@ iterator items*[id,lo,hi:static[int]](t: gTindexDummy[id,lo,hi]): auto =
     if i.i == hi: break
     inc i.i
 template head*[id,lo,hi:static[int]](t: gTindexDummy[id,lo,hi]): expr =
-  index(IndexType(t), lo)
+  type Index = IndexType(t)
+  Index(i: lo)
 iterator tail*[id,lo,hi:static[int]](t: gTindexDummy[id,lo,hi]): auto =
   type Index = IndexType(t)
   var i = Index(i: lo+1)
@@ -350,6 +353,7 @@ proc localDummyAt(ds: seq[dummyTree], i: int): seqset[NimNode] =
       result.excl ds[n].idx
 const autoSumFunctionNames = ["=", "+=", "-=", "[]="]
 const autoSumFunctionNamesAsgn = ["=", "[]="]
+const autoSumFunctionNamesNoBracket = ["=", "+=", "-="]
 proc requireAutoSum(n: NimNode, dt: dummyTree): bool =
   proc isAsgnCall(n: NimNode): bool =
     if n.kind in CallNodes:
@@ -368,7 +372,7 @@ proc requireAutoSum(n: NimNode, dt: dummyTree): bool =
       return false
   let lastLocalDummy = localDummyAt(dt.branch, dt.branch.len-1)
   return (n.kind == nnkAsgn or n.isAsgnCall) and lastLocalDummy.len > 0
-proc dummyLoopGen(n: NimNode, ix: seqset[NimNode]): NimNode =
+proc dummyLoopGen(ix: seqset[NimNode], n: NimNode): NimNode =
   result = n.copy
   for i in ix:
     # echo i.repr, " : ", i.gettype.lisprepr
@@ -376,7 +380,7 @@ proc dummyLoopGen(n: NimNode, ix: seqset[NimNode]): NimNode =
       id = gensym(nskForVar, "__" & $i.symbol)
       body = result.convert(i, id)
     result = newNimNode(nnkForStmt).add(id, i, body)
-proc accumLoopGen(accumIx: seqset[NimNode], asgn: NimNode, accum: NimNode): NimNode =
+proc dummyLoopGen(accumIx: seqset[NimNode], asgn: NimNode, accum: NimNode): NimNode =
   var
     asgnLoop = asgn
     accumLoops = newseq[NimNode](accumIx.len)
@@ -384,14 +388,14 @@ proc accumLoopGen(accumIx: seqset[NimNode], asgn: NimNode, accum: NimNode): NimN
     accumLoops[n] = accum
   for n, i in accumIx:
     let
-      ihead = newCall(ident"head", i)
+      ihead = newCall(bindsym"head", i)
       id = gensym(nskForVar, "__" & $i.symbol)
     asgnLoop = asgnLoop.convert(i, ihead)
     for m in 0..<accumLoops.len:
       if m > n:
         accumLoops[m] = newNimNode(nnkForStmt).add(id, i, accumLoops[m].convert(i, id))
       elif m == n:
-        accumLoops[m] = newNimNode(nnkForStmt).add(id, newCall(ident"tail", i), accumLoops[m].convert(i, id))
+        accumLoops[m] = newNimNode(nnkForStmt).add(id, newCall(bindsym"tail", i), accumLoops[m].convert(i, id))
       else:
         accumLoops[m] = accumLoops[m].convert(i, ihead)
   result = newStmtList().add asgnLoop
@@ -401,40 +405,55 @@ proc autoSum(n: NimNode, dt: dummyTree): NimNode =
   # echo "\n>>>> autoSum"
   # echo n.treerepr
   # echo n.repr
+  proc getlhs(n: NimNode): NimNode =
+    if n.kind == nnkAsgn or
+       (n.kind in CallNodes and
+        n[0].kind == nnkSym and
+        $n[0].symbol in autoSumFunctionNamesNoBracket):
+      result = n[0]
+    elif n.kind in CallNodes and n[0].kind == nnkSym and $n[0].symbol == "[]=":
+      result = newNimNode(nnkBracketExpr)
+      for i in 1..<n.len-1:
+        result.add n[i]
+    else:
+      error "autoSum failed to get the LHS of NimNode:\n" & n.treerepr
   proc getlhsix(s: seq[dummyTree]): seqset[NimNode] =
     result.init
     for i in 0..<s.len-1: # Every but last belongs to the left hand side.
       result.incl s[i].idx
   let
+    lhs = n.getlhs
     rhs = n[^1]              # Last child is the right hand side.
     rhsDT = dt.branch[^1]
     rhsIx = rhsDT.idx
-    lhsIx = getlhsix(dt.branch)
+    lhsIx = dt.branch.getlhsix
     rhsLocalIx = dt.idx - lhsIx
     lhsLocalIx = dt.idx - rhsIx
     sharedIx = lhsIx - lhsLocalIx
-    sharedIxLoop = n.dummyLoopGen sharedIx
+    sharedIxLoop = sharedIx.dummyLoopGen n
   if rhs.kind in CallNodes:
     for i in 1..<rhs.len:
       let localIx = localDummyAt(rhsDT.branch, i) - sharedIx
       if localIx.len > 0:
         error "subExpr autoSum not implemented"
   if n.kind == nnkAsgn or $n[0].symbol in autoSumFunctionNamesAsgn:
-    var accum: NimNode
-    if n.kind == nnkAsgn:
-      accum = infix(n[0], "+=", n[1])
-    elif $n[0].symbol == "[]=":
-      var bracket = newNimNode(nnkBracketExpr)
-      for i in 1..<n.len-1:
-        bracket.add n[i]
-      accum = infix(bracket, "+=", n[^1])
-    result = accumLoopGen(rhsLocalIx, sharedIxLoop, accum.dummyLoopGen(sharedIx))
+    let accum = sharedIx.dummyLoopGen infix(lhs, "+=", rhs)
+    result = rhsLocalIx.dummyLoopGen(sharedIxLoop, accum)
   else:
-    result = sharedIxLoop.dummyLoopGen(rhsLocalIx)
-  # echo "autoSum generated tree:\n" & result.treerepr
-  hint "autoSum generated code:\n" & result.repr
+    result = rhsLocalIx.dummyLoopGen sharedIxLoop
   if lhsLocalIx.len > 0:
-    error "lhsLocalIx autoSum not implemented"
+    var lhsHead = lhs.copy
+    var lhsLocalIxDummy = newseq[NimNode](lhsLocalIx.len)
+    for n, i in lhsLocalIx:
+      lhsLocalIxDummy[n] = gensym(nskUnknown, $i) # avoid conversion, replace later
+      lhsHead = lhsHead.replace(i, newCall(bindsym"head", lhsLocalIxDummy[n]))
+    let
+      reAsgn = lhs.newAssignment lhsHead
+    result = lhsLocalIx.dummyLoopGen(result, sharedIx.dummyLoopGen reAsgn)
+    for n, i in lhsLocalIx:
+      result = result.replace(lhsLocalIxDummy[n], i) # replace dummy back
+  # echo "autoSum generated tree:\n" & result.treerepr
+  hint "autoSum received:\n" & n.repr & "\ngenerated:\n" & result.repr
   # echo "<<<< autoSum"
 proc dummyLoop(n: NimNode): NimNode =
   # echo "\n>>>> dummyLoop"
@@ -446,7 +465,7 @@ proc dummyLoop(n: NimNode): NimNode =
     if n.requireAutoSum dt:
       result = n.autoSum dt
     else:
-      result = n.dummyLoopGen dt.idx
+      result = dt.idx.dummyLoopGen n
   else:
     result = n
   # echo result.treerepr
@@ -618,13 +637,15 @@ when isMainModule:
       echo "  x_a = m_ab y_b = ", x
       mn = m[a,b] * m[a,b]
       echo "  m.norm2 = ", mn
-      # X[a,b] = m[a,c]*I[c,a]
-      # echo "  X_ab = m_ac I_ca =\n", X
+      X[a,b] = m[a,c]*I[c,a]
+      echo "  X_ab = m_ac I_ca =\n", X
+      X[a,b] = m[c,d]
+      echo "  X_ab = m_cd =\n", X
+      # x[a] = a + m[a,b]*y[b]
+      # echo "  x_a = m_ab y_b = ", x
       # X[a,b] = I[b,c]*x[c]*(m[c,d]*y[d])
       # echo "  X =\n", X
       # y[a] = m[a,b] * x[b] + x[a]
-      # echo "  y = ", y
-      # y[a] += 1.0 + x[b] * m[b,a]
       # echo "  y = ", y
 
 #[
