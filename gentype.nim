@@ -83,7 +83,7 @@ template staticint(x): expr =
 macro unrollfor(i: untyped, lo, hi: int, n: untyped): stmt =
   # echo "\n>>>> unrollfor"
   # echo n.treerepr
-  result = newNimNode(nnkStmtList)
+  result = newStmtList()
   let
     ll = staticint lo
     hh = staticint hi
@@ -371,7 +371,7 @@ proc requireAutoSum(n: NimNode, dt: dummyTree): bool =
 proc dummyLoopGen(n: NimNode, ix: seqset[NimNode]): NimNode =
   result = n.copy
   for i in ix:
-    echo i.repr, " : ", i.gettype.lisprepr
+    # echo i.repr, " : ", i.gettype.lisprepr
     let
       id = gensym(nskForVar, "__" & $i.symbol)
       body = result.convert(i, id)
@@ -394,13 +394,13 @@ proc accumLoopGen(accumIx: seqset[NimNode], asgn: NimNode, accum: NimNode): NimN
         accumLoops[m] = newNimNode(nnkForStmt).add(id, newCall(ident"tail", i), accumLoops[m].convert(i, id))
       else:
         accumLoops[m] = accumLoops[m].convert(i, ihead)
-  result = newNimNode(nnkStmtList).add asgnLoop
+  result = newStmtList().add asgnLoop
   for n in accumLoops:
     result.add(n)
 proc autoSum(n: NimNode, dt: dummyTree): NimNode =
-  echo "\n>>>> autoSum"
-  echo n.treerepr
-  echo n.repr
+  # echo "\n>>>> autoSum"
+  # echo n.treerepr
+  # echo n.repr
   proc getlhsix(s: seq[dummyTree]): seqset[NimNode] =
     result.init
     for i in 0..<s.len-1: # Every but last belongs to the left hand side.
@@ -431,11 +431,11 @@ proc autoSum(n: NimNode, dt: dummyTree): NimNode =
     result = accumLoopGen(rhsLocalIx, sharedIxLoop, accum.dummyLoopGen(sharedIx))
   else:
     result = sharedIxLoop.dummyLoopGen(rhsLocalIx)
-  echo "autoSum generated tree:\n" & result.treerepr
+  # echo "autoSum generated tree:\n" & result.treerepr
   hint "autoSum generated code:\n" & result.repr
   if lhsLocalIx.len > 0:
     error "lhsLocalIx autoSum not implemented"
-  echo "<<<< autoSum"
+  # echo "<<<< autoSum"
 proc dummyLoop(n: NimNode): NimNode =
   # echo "\n>>>> dummyLoop"
   # echo n.treerepr
@@ -453,16 +453,16 @@ proc dummyLoop(n: NimNode): NimNode =
   # echo "<<<< dummyLoop"
 
 macro tensorOps*(n: typed): typed =
-  echo "\n>>>> tensorOps"
-  result = newNimNode(nnkStmtList)
+  # echo "\n>>>> tensorOps"
+  result = newStmtList()
   if n.kind == nnkStmtList:
     for s in n:
       result.add s.dummyLoop
   else:
     result.add n.dummyLoop
   # echo result.treerepr
-  echo result.repr
-  echo "<<<< tensorOps"
+  # echo result.repr
+  # echo "<<<< tensorOps"
 
 proc `$`*(v: gT1): string =
   # We don't need to put explicit generic params.
