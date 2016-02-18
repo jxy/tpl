@@ -601,7 +601,7 @@ proc accumulateAutoSum(n: NimNode): NimNode =
       for c in accum:
         result.add c
     elif fun in ["*=", "/="]: # Need a temporary.
-      error "not implemented"
+      error "not implemented for *= or /="
     else:                     # += or -= need no special treatment.
       result = n
   else:
@@ -624,18 +624,22 @@ macro fixpoint(i: static[int], m, oldn, n: typed): typed =
 macro splittingHelper(n: typed): typed =
   const splits = @[bindsym"splitLhsDuplicate", bindsym"splitRhsSum", bindsym"splitMultiOp"]
   proc g(n: NimNode): NimNode =
+    # echo "\n## splittingHelper:g <= ", n.treerepr
     if n.kind == nnkStmtList:
       result = newStmtList()
       for i in 0..<n.len:
         result.add n[i].g
     elif n.kind == nnkBlockStmt:
       result = newBlockStmt(n[0], n[1].g)
+    elif n.kind in RoutineNodes:
+      result = n
+      result[6] = n[6].g
     else:
       result = n
       for t in splits:
         result = newCall(t, result)
+    # echo "## splittingHelper:g => ", result.treerepr
   result = n.g
-  echo "splitting: ", result.repr
 template splitting(n: expr): expr =
   fixpointcall(splittingHelper, n)
 macro autoSum(n: typed): typed =
@@ -647,6 +651,9 @@ macro autoSum(n: typed): typed =
         result.add n[i].g
     elif n.kind == nnkBlockStmt:
       result = newBlockstmt(n[0], n[1].g)
+    elif n.kind in RoutineNodes:
+      result = n
+      result[6] = n[6].g
     else:
       result = n.accumulateAutoSum
   result = n.g
@@ -661,6 +668,9 @@ macro looping(n: typed): typed =
         result.add n[i].g
     elif n.kind == nnkBlockStmt:
       result = newBlockstmt(n[0], n[1].g)
+    elif n.kind in RoutineNodes:
+      result = n
+      result[6] = n[6].g
     else:
       let
         t = n.genDummyTree
@@ -699,6 +709,9 @@ macro fusionHelper(n: typed): typed =
           inc i
     elif n.kind == nnkBlockStmt:
       result = newBlockstmt(n[0], n[1].g)
+    elif n.kind in RoutineNodes:
+      result = n
+      result[6] = n[6].g
     elif n.kind == nnkForStmt and n[^1].kind == nnkStmtList:
       result = newNimNode(nnkForStmt)
       for j in 0..<n.len-1:
@@ -727,42 +740,39 @@ proc `$`*(v: gT1): string =
   # Using `IndexType(T,N)` we can get the type.
   # Thus we can avoid exporting implementation details,
   # and users can write generic code for their tensors.
-  var
-    i: Dummy(IndexType(v, 1))
-    s = ""
   tensorOps:
+    var i: Dummy(IndexType(v, 1))
+    result = ""
     if i == i.type.lo:
-      s = "["
+      result = "["
     else:
-      s &= "\t"
-    s &= $v[i]
+      result &= "\t"
+    result &= $v[i]
     if i < i.type.hi:
-      s &= ","
+      result &= ","
     else:
-      s &= "\t]"
-  return s
+      result &= "\t]"
 proc `$`*(m: gT2): string =
-  var
-    i: Dummy(IndexType(m, 1))
-    j: Dummy(IndexType(m, 2))
-    # k: Dummy(IndexType(m, 0)) # compile time error: out of bounds
-    s = ""
-  tensorOps:
+  tensorOps:                    # Does not work if put in proc pragma.
+    var
+      i: Dummy(IndexType(m, 1))
+      j: Dummy(IndexType(m, 2))
+      # k: Dummy(IndexType(m, 0)) # compile time error: out of bounds
+    result = ""
     if i == i.type.lo:
       if j == j.type.lo:
-        s &= "[[ "
+        result &= "[[ "
       else:
-        s &= "\n [ "
+        result &= "\n [ "
     else:
-      s &= "\t"
-    s &= $m[i,j]
+      result &= "\t"
+    result &= $m[i,j]
     if i < i.type.hi:
-      s &= ","
+      result &= ","
     else:
-      s &= "\t]"
+      result &= "\t]"
       if j == j.type.hi:
-        s &= "]"
-  return s
+        result &= "]"
 
 when isMainModule:
   type
