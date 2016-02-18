@@ -457,7 +457,7 @@ proc needAutoSum(n: NimNode, t: dummyTree): bool =
   let rhsLocalIx = t.idx - t.branch.getlhsix
   result = n.kind == nnkAsgn or (n.kind in CallNodes and $n[0].symbol in autoSumFunctions) and
     rhsLocalIx.len > 0
-macro splitLhsDuplicate(n: typed): typed =
+macro splitLhsDuplicate(n: typed): untyped =
   echo "\n>>>> splitLhsDuplicate <= ", n.repr
   # x[a,b] = y[b]
   #  -> x[a.head,b] = y[b]
@@ -498,7 +498,7 @@ macro splitLhsDuplicate(n: typed): typed =
       for c in lhsTail:
         result.add c.newAssignment stmtHead.getlhs
   echo "<<<< splitLhsDuplicate => ", result.repr
-macro splitRhsSum(n: typed): typed =
+macro splitRhsSum(n: typed): untyped =
   echo "\n>>>> splitRhsSum <= ", n.repr
   # echo "\n>>>> splitRhsSum <= ", n.treerepr
   # x[a] = y[a] `op` z[a,b]
@@ -607,42 +607,42 @@ proc accumulateAutoSum(n: NimNode): NimNode =
   else:
     result = n
   echo "<<<< accumulateAutoSum => ", result.repr
-macro splitMultiOp(n: typed): typed =
+macro splitMultiOp(n: typed): untyped =
   echo "\n>>>> splitMultiOp <= ", n.repr
   result = n
   echo "<<<< splitMultiOp => ", result.repr
-template fixpointcall(m, n: expr): expr =
-  fixpoint(0, m, n, m(n))
-macro fixpoint(i: static[int], m, oldn, n: typed): typed =
+template fixpointcall(m, n: untyped): untyped =
+  fixpoint(0, m, newEmptyNode(), n)
+macro fixpoint(i: static[int], m, oldn, n: typed): untyped =
   # Call m repeatedly on n until nothing changes, with each step
   # type checked.  Requires m is typed -> typed.
   echo "\nfixpoint:", m.repr, ":", i, " -----> ", n.repr
-  if oldn == n:
-    return n
-  else:
+  if i == 0 or oldn != n:
     return newCall(bindsym"fixpoint", newLit(i+1), m, n, newCall(m, n))
-macro splittingHelper(n: typed): typed =
-  const splits = @[bindsym"splitLhsDuplicate", bindsym"splitRhsSum", bindsym"splitMultiOp"]
-  proc g(n: NimNode): NimNode =
+  else:
+    return n
+macro splittingHelper(n: untyped): untyped =
+  # const splits = @[bindsym"splitLhsDuplicate", bindsym"splitRhsSum", bindsym"splitMultiOp"]
+  proc g(m, n: NimNode): NimNode =
     # echo "\n## splittingHelper:g <= ", n.treerepr
     if n.kind == nnkStmtList:
       result = newStmtList()
       for i in 0..<n.len:
-        result.add n[i].g
+        result.add m.g n[i]
     elif n.kind == nnkBlockStmt:
-      result = newBlockStmt(n[0], n[1].g)
+      result = newBlockStmt(n[0], m.g n[1])
     elif n.kind in RoutineNodes:
       result = n
-      result[6] = n[6].g
+      result[6] = m.g n[6]
     else:
-      result = n
-      for t in splits:
-        result = newCall(t, result)
+      result = newCall(m, n)
+      # for t in splits:
+      #   result = newCall(t, result)
     # echo "## splittingHelper:g => ", result.treerepr
-  result = n.g
-template splitting(n: expr): expr =
+  result = bindsym"splitMultiOp".g bindsym"splitRhsSum".g bindsym"splitLhsDuplicate".g n
+template splitting(n: untyped): untyped =
   fixpointcall(splittingHelper, n)
-macro autoSum(n: typed): typed =
+macro autoSum(n: typed): untyped =
   echo "\n>>>> autoSum <= ", n.repr
   proc g(n: NimNode): NimNode =
     if n.kind == nnkStmtList:
@@ -658,10 +658,10 @@ macro autoSum(n: typed): typed =
       result = n.accumulateAutoSum
   result = n.g
   echo "<<<< autoSum => ", result.repr
-macro looping(n: typed): typed =
+macro looping(n: typed): untyped =
   echo "\n>>>> looping: <= ", n.repr
   proc g(n: NimNode): NimNode =
-    echo "\n>>>> looping:g <= ", n.repr
+    # echo "\n>>>> looping:g <= ", n.repr
     if n.kind == nnkStmtList:
       result = newStmtList()
       for i in 0..<n.len:
@@ -679,13 +679,13 @@ macro looping(n: typed): typed =
         otherIx = t.idx - rhsLocalIx
       # echo t.treerepr
       result = rhsLocalIx.dummyLoopGen otherIx.dummyLoopGen n
-    echo "<<<< looping:g => ", result.repr
+    # echo "<<<< looping:g => ", result.repr
   result = n.g
   echo "<<<< looping => ", result.repr
-macro fusionHelper(n: typed): typed =
-  echo "\n>>>> fusion <= ", n.repr
+macro fusionHelper(n: typed): untyped =
+  # echo "\n>>>> fusion <= ", n.repr
   proc g(n: NimNode): NimNode =
-    echo "#### fusion:g <= ", n.repr
+    # echo "#### fusion:g <= ", n.repr
     if n.kind == nnkStmtList:
       result = newStmtList()
       var i = 0
@@ -719,12 +719,12 @@ macro fusionHelper(n: typed): typed =
       result.add n[^1].g
     else:
       result = n
-    echo "<<<< fusion:g => ", result.repr
+    # echo "<<<< fusion:g => ", result.repr
   result = n.g
-  echo "<<<< fusion => ", result.repr
-template fusion(n: expr): expr =
+  # echo "<<<< fusion => ", result.repr
+template fusion(n: untyped): untyped =
   fixpointcall(fusionHelper, n)
-macro tensorOps*(n: typed): typed =
+macro tensorOps*(n: untyped): untyped =
   # echo "\n>>>> tensorOps"
   # echo "tensorOps received: ", n.repr
   const transforms = @[bindsym"splitting", bindsym"autoSum", bindsym"looping", bindsym"fusion"]
@@ -898,7 +898,6 @@ when isMainModule:
       # y[a] = m[a,b] * x[b] + x[a]
       # echo "  y = ", y
 
-when false:
   block:
     echo "\n* test nested"
     type
@@ -912,4 +911,4 @@ when false:
       m: cm
     tensorOps:
       m[mu,nu][i] = 1.0*i*nu
-    echo m
+      echo m
