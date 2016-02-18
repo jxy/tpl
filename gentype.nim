@@ -477,18 +477,26 @@ macro splitLhsDuplicate(n: typed): typed =
     if lhsLocalIx.len > 0:
       var
         stmtHead = n
-        lhsTail = lhs
         constHead = newNimNode(nnkConstSection)
-      for i in lhsLocalIx:
+        lhsTail = newseq[NimNode](lhsLocalIx.len)
+      for m in 0..<lhsTail.len:
+        lhsTail[m] = lhs
+      for n, i in lhsLocalIx:
         let
           iheadCall = newCall(bindsym"head", i)
           ihead = gensym(nskConst, "__C__" & i.dummyStr)
           itail = newCall(bindsym"tail", i)
         constHead.add(newNimNode(nnkConstDef).add(ihead, newEmptyNode(), iheadCall))
         stmtHead = stmtHead.convert(i, ihead)
-        lhsTail = lhsTail.convert(i, itail)
-      result = newStmtList().add(
-        constHead, stmtHead, lhsTail.newAssignment stmtHead.getlhs)
+        for m in 0..<lhsTail.len:
+          if m < n:
+            lhsTail[m] = lhsTail[m].convert(i, ihead)
+          elif m == n:
+            lhsTail[m] = lhsTail[m].convert(i, itail)
+          # Else, for m > n, do nothing.
+      result = newStmtList().add(constHead, stmtHead)
+      for c in lhsTail:
+        result.add c.newAssignment stmtHead.getlhs
   echo "<<<< splitLhsDuplicate => ", result.repr
 macro splitRhsSum(n: typed): typed =
   echo "\n>>>> splitRhsSum <= ", n.repr
