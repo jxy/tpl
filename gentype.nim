@@ -1,4 +1,5 @@
 import macros
+import strutils
 import math
 
 iterator pairs(n: NimNode): (int, NimNode) =
@@ -25,13 +26,24 @@ proc convert(n: NimNode, i: NimNode, j: NimNode): NimNode =
   proc go(n: NimNode, i: NimNode, j: NimNode): tuple[rep: bool, nn: NimNode] =
     # echo "  ==== go : ", n.lisprepr
     if n == i:
+      # echo "  ---- n == i"
       result = (true, j)
     else:
+      # echo "A"
       result.rep = false
-      result.nn = n.copyNimNode
+      # echo "* n: ", n.lisprepr
+      result.nn = n.copy # Sometimes we need to copy before copyNimNode???
+      result.nn.del(0, n.len) # We just copy it and delete its children.
+      # echo "THE node: ", result.nn.lisprepr
+      # result.nn = n.copyNimNode # FIXME: we may not need the changes later if we stop using copyNimNode.
+      # echo "THE node: ", result.nn.lisprepr
       for c in n:
         let cc = c.go(i,j)
+        # echo "# ", cc.rep, " : ", cc.nn.lisprepr
+        # echo "BEFORE"
         result.nn.add cc.nn
+        # echo "AFTER"
+        # echo "## ", result.rep, " : ", result.nn.lisprepr
         if cc.rep:
           result.rep = true
     #[
@@ -43,6 +55,7 @@ proc convert(n: NimNode, i: NimNode, j: NimNode): NimNode =
     if result.nn.kind == nnkHiddenCallConv:
       # simply ask the compiler to do the call conv again
       result.nn = result.nn[1]
+    # echo "## ", result.rep, " : ", result.nn.lisprepr
     if result.rep:
       for i, c in result.nn:
         if c.kind == nnkHiddenStdConv:
@@ -56,16 +69,20 @@ proc convert(n: NimNode, i: NimNode, j: NimNode): NimNode =
       if result.nn.kind in CallNodes:
         if result.nn[0].kind == nnkSym:
           result.nn[0] = ident($result.nn[0].symbol)
-          if "[]" == $result.nn[0]:
-            var nnn = newNimNode(nnkBracketExpr)
-            for i in 1..<result.nn.len:
-              nnn.add result.nn[i]
-            result.nn = nnn
+          # if "[]" == $result.nn[0]: # We may need this.
+          #   result.nn[0] = bindsym("[]", brOpen)
+          # if "[]" == $result.nn[0]: # We may need this.
+          #   var nnn = newNimNode(nnkBracketExpr)
+          #   for i in 1..<result.nn.len:
+          #     nnn.add result.nn[i]
+          #   result.nn = nnn
         for i in 0..<result.nn.len:
+          # echo "#### ", result.nn[i].lisprepr
           # if result.nn[i].kind in CallNodes+{nnkIfExpr}:
           # If we need more par, try the above line first, with more node kinds.
           if result.nn[i].kind in {nnkPrefix, nnkInfix, nnkCall, nnkIfExpr}:
             result.nn[i] = newPar(result.nn[i])
+          # echo "#### ", result.nn[i].lisprepr
       elif result.nn.kind == nnkHiddenDeref:
         result.nn = result.nn[0]
       elif result.nn.kind == nnkConv and result.nn[0].kind == nnkSym:
@@ -133,6 +150,11 @@ proc excl[T](s: var seqset[T], x: seqset[T]) =
 proc `-`[T](x: seqset[T], y: seqset[T]): seqset[T] =
   result = x
   result.excl(y)
+proc intersection[T](x: seqset[T], y:seqset[T]): seqset[T] =
+  result.init
+  for i in x:
+    if i in y:
+      result.incl(i)
 
 ####################
 # index type
@@ -232,16 +254,18 @@ iterator items*[id,lo,hi:static[int]](t: gTindexDummy[id,lo,hi]): auto =
     yield i
     if i.i == hi: break
     inc i.i
-template head*[id,lo,hi:static[int]](t: gTindexDummy[id,lo,hi]): expr =
-  type Index = IndexType(t)
-  Index(i: lo)
+template head*[id,lo,hi:static[int]](t: gTindexDummy[id,lo,hi]): auto =
+  IndexType(t)(i: lo)
 iterator tail*[id,lo,hi:static[int]](t: gTindexDummy[id,lo,hi]): auto =
   type Index = IndexType(t)
-  var i = Index(i: lo+1)
-  while true:
-    yield i
-    if i.i == hi: break
-    inc i.i
+  const lo1 = lo + 1
+  if lo1 <= hi:
+    var i = Index(i: lo1)
+    while true:
+      yield i
+      if i.i == hi: break
+      inc i.i
+proc tail*(t: gTindexDummy): type(t) {.nodecl.} = discard
 macro choice(n: int, v: varargs[expr]): expr =
   let i = n.staticint.int
   if i >= 1 and i <= v.len:
@@ -331,16 +355,43 @@ proc treerepr(t: dummyTree): string {.compileTime.} =
 proc genDummyTree(n: NimNode): dummyTree =
   # echo "\n>>>> genDummyTree"
   # echo n.lisprepr
+  proc isDummyType(n: NimNode): bool =
+    # echo "## isDummyType got: ", n.lisprepr
+    let t =
+      if n.kind == nnkSym: n.gettype
+      elif n.kind in CallNodes and n[0].kind == nnkSym: n[0].gettype[1]
+      else: newEmptyNode()
+    # if n.kind in CallNodes and n[0].kind == nnkSym: echo "call type: ", n[0].gettype.lisprepr
+    # if n.kind in CallNodes and n[0].kind == nnkClosedSymChoice:
+    #   echo "  ### ", n[0].gettype.lisprepr
+    #   for c in n[0]:
+    #     echo "  ## ", c.lisprepr, " : ", c.gettype[1].lisprepr
+    #     echo "  -> ", c.gettype[1].sametype gTindexDummy.gettype
+    #     var s = newCall(c)
+    #     for i in 1..<n.len:
+    #       s.add n[i]
+    #     echo s.gettype.lisprepr
+    # echo "## dummy type check got type: ", t.repr
+    result = t.sametype gTindexDummy.gettype
+    # echo "isDummyType returns: ", result
+  proc skipDummyCheck(n: NimNode, i: int): bool =
+    # result = n.kind notin CallNodes + {
+    #   nnkStmtList, nnkBlockStmt, nnkBracket,
+    #   nnkIfStmt, nnkWhenStmt, nnkCaseStmt, nnkWhileStmt, nnkTryStmt,
+    #   nnkHiddenDeref, nnkHiddenAddr, nnkHiddenStdConv
+    # }
+    result = n.kind in {nnkConstSection, nnkVarSection, nnkLetSection}
+    result = result or n.kind == nnkForStmt and i < 2 # We check only the body.
+    if result:
+      echo "skipDummyCheck ", i, " ", n.lisprepr
+      echo "    => ", result
   result.idx.init
   newseq result.branch, n.len
-  if n.kind == nnkSym:
-    let t = n.gettype
-    # echo n.repr, "  <of>  ", t.treerepr
-    if t.kind == nnkSym and "gTindexDummy" == $t.symbol:
-      result.idx.incl n
+  if n.isDummyType:
+    result.idx.incl n
   else:
     for i, c in n:
-      let t = c.genDummyTree
+      let t = if n.skipDummyCheck i: newEmptyNode().genDummyTree else: c.genDummyTree
       result.idx += t.idx
       result.branch[i] = t
   # echo "<<<< genDummytree"
@@ -351,134 +402,314 @@ proc localDummyAt(ds: seq[dummyTree], i: int): seqset[NimNode] =
   for n in 0..<ds.len:
     if n != i:
       result.excl ds[n].idx
-const autoSumFunctionNames = ["=", "+=", "-=", "[]="]
-const autoSumFunctionNamesAsgn = ["=", "[]="]
-const autoSumFunctionNamesNoBracket = ["=", "+=", "-="]
-proc requireAutoSum(n: NimNode, dt: dummyTree): bool =
-  proc isAsgnCall(n: NimNode): bool =
-    if n.kind in CallNodes:
-      let
-        f = n[0].gettype      # the function type
-        fname = $n[0].symbol  # the function name
-        firstArg = f[2]
-      var restArgHasVar = false
-      for i in 3..<f.len:
-        if f[i].isVarArg:
-          restArgHasVar = true
-          break
-      return fname in autoSumFunctionNames and
-        firstArg.isVarArg and not restArgHasVar
-    else:
-      return false
-  let lastLocalDummy = localDummyAt(dt.branch, dt.branch.len-1)
-  return (n.kind == nnkAsgn or n.isAsgnCall) and lastLocalDummy.len > 0
+const autoSumFunctions = ["=", "+=", "-=", "*=", "/=", "[]="]
+const autoSumFunctionNoBracket = ["=", "+=", "-=", "*=", "/="]
+const autoSumOps = ["+", "-", "*", "/"]
+proc dummyStr(n: NimNode): string =
+  let s = n.repr.strip
+  var id = newString(s.len)
+  var j = 0
+  for i in 0..<s.len:
+    if s[i] in IdentChars:
+      id[j] = s[i]
+      inc j
+    elif id[j] != '_':
+      id[j] = '_'
+      inc j
+  if j != s.len: id.setLen j
+  return id
 proc dummyLoopGen(ix: seqset[NimNode], n: NimNode): NimNode =
+  proc reCall(n: NimNode): NimNode =
+    # Look up symbol again to change a proc call to an iterator call.
+    # FIXME: needs a more sophisticated treatment.
+    if n.kind in CallNodes:
+      result = n.copy
+      result[0] = ident($n[0])
+    else:
+      result = n
   result = n.copy
   for i in ix:
     # echo i.repr, " : ", i.gettype.lisprepr
+    # var ii = i.copy
+    # if ii.kind in CallNodes: ii[0] = ident($ii[0])
     let
-      id = gensym(nskForVar, "__" & $i.symbol)
+      id = gensym(nskForVar, "__" & i.dummyStr)
+      ii = i.reCall
       body = result.convert(i, id)
-    result = newNimNode(nnkForStmt).add(id, i, body)
-proc dummyLoopGen(accumIx: seqset[NimNode], asgn: NimNode, accum: NimNode): NimNode =
-  var
-    asgnLoop = asgn
-    accumLoops = newseq[NimNode](accumIx.len)
-  for n in 0..<accumLoops.len:
-    accumLoops[n] = accum
-  for n, i in accumIx:
-    let
-      ihead = newCall(bindsym"head", i)
-      id = gensym(nskForVar, "__" & $i.symbol)
-    asgnLoop = asgnLoop.convert(i, ihead)
-    for m in 0..<accumLoops.len:
-      if m > n:
-        accumLoops[m] = newNimNode(nnkForStmt).add(id, i, accumLoops[m].convert(i, id))
-      elif m == n:
-        accumLoops[m] = newNimNode(nnkForStmt).add(id, newCall(bindsym"tail", i), accumLoops[m].convert(i, id))
-      else:
-        accumLoops[m] = accumLoops[m].convert(i, ihead)
-  result = newStmtList().add asgnLoop
-  for n in accumLoops:
-    result.add(n)
-proc autoSum(n: NimNode, dt: dummyTree): NimNode =
-  # echo "\n>>>> autoSum"
-  # echo n.treerepr
-  # echo n.repr
-  proc getlhs(n: NimNode): NimNode =
-    if n.kind == nnkAsgn or
-       (n.kind in CallNodes and
-        n[0].kind == nnkSym and
-        $n[0].symbol in autoSumFunctionNamesNoBracket):
-      result = n[0]
-    elif n.kind in CallNodes and n[0].kind == nnkSym and $n[0].symbol == "[]=":
-      result = newNimNode(nnkBracketExpr)
-      for i in 1..<n.len-1:
-        result.add n[i]
-    else:
-      error "autoSum failed to get the LHS of NimNode:\n" & n.treerepr
-  proc getlhsix(s: seq[dummyTree]): seqset[NimNode] =
-    result.init
-    for i in 0..<s.len-1: # Every but last belongs to the left hand side.
-      result.incl s[i].idx
-  let
-    lhs = n.getlhs
-    rhs = n[^1]              # Last child is the right hand side.
-    rhsDT = dt.branch[^1]
-    rhsIx = rhsDT.idx
-    lhsIx = dt.branch.getlhsix
-    rhsLocalIx = dt.idx - lhsIx
-    lhsLocalIx = dt.idx - rhsIx
-    sharedIx = lhsIx - lhsLocalIx
-    sharedIxLoop = sharedIx.dummyLoopGen n
-  if rhs.kind in CallNodes:
-    for i in 1..<rhs.len:
-      let localIx = localDummyAt(rhsDT.branch, i) - sharedIx
-      if localIx.len > 0:
-        error "subExpr autoSum not implemented"
-  if n.kind == nnkAsgn or $n[0].symbol in autoSumFunctionNamesAsgn:
-    let accum = sharedIx.dummyLoopGen infix(lhs, "+=", rhs)
-    result = rhsLocalIx.dummyLoopGen(sharedIxLoop, accum)
+    result = newNimNode(nnkForStmt).add(id, ii, body)
+proc getlhs(n: NimNode): NimNode =
+  # echo "getlhs: ", n.treerepr
+  if n.kind == nnkAsgn:
+    result = n[0]
+  elif n.kind in CallNodes and $n[0] in autoSumFunctionNoBracket:
+    result = n[1]
+  elif n.kind in CallNodes and $n[0] == "[]=":
+    result = newNimNode(nnkBracketExpr)
+    for i in 1..<n.len-1:
+      result.add n[i]
   else:
-    result = rhsLocalIx.dummyLoopGen sharedIxLoop
-  if lhsLocalIx.len > 0:
-    var lhsHead = lhs.copy
-    var lhsLocalIxDummy = newseq[NimNode](lhsLocalIx.len)
-    for n, i in lhsLocalIx:
-      lhsLocalIxDummy[n] = gensym(nskUnknown, $i) # avoid conversion, replace later
-      lhsHead = lhsHead.replace(i, newCall(bindsym"head", lhsLocalIxDummy[n]))
+    error "Failed to get the LHS of NimNode:\n" & n.treerepr
+proc getlhsix(s: seq[dummyTree]): seqset[NimNode] =
+  result.init
+  for i in 0..<s.len-1: # Every but last belongs to the left hand side.
+    result.incl s[i].idx
+proc needAutoSum(n: NimNode, t: dummyTree): bool =
+  let rhsLocalIx = t.idx - t.branch.getlhsix
+  result = n.kind == nnkAsgn or (n.kind in CallNodes and $n[0].symbol in autoSumFunctions) and
+    rhsLocalIx.len > 0
+macro splitLhsDuplicate(n: typed): typed =
+  echo "\n>>>> splitLhsDuplicate <= ", n.repr
+  # x[a,b] = y[b]
+  #  -> x[a.head,b] = y[b]
+  #     x[a.tail,b] = x[a.head,b]
+  # echo ">>>> splitLhsduplicate: ", n.lisprepr
+  # echo "     ", n.repr
+  result = n                    # By default.
+  let t = n.genDummyTree
+  if n.needAutoSum t:
     let
-      reAsgn = lhs.newAssignment lhsHead
-    result = lhsLocalIx.dummyLoopGen(result, sharedIx.dummyLoopGen reAsgn)
-    for n, i in lhsLocalIx:
-      result = result.replace(lhsLocalIxDummy[n], i) # replace dummy back
-  # echo "autoSum generated tree:\n" & result.treerepr
-  hint "autoSum received:\n" & n.repr & "\ngenerated:\n" & result.repr
-  # echo "<<<< autoSum"
-proc dummyLoop(n: NimNode): NimNode =
-  # echo "\n>>>> dummyLoop"
-  # echo n.treerepr
-  let
-    dt = genDummyTree(n)
-  # echo dt.treerepr
-  if dt.idx.len > 0:
-    if n.requireAutoSum dt:
-      result = n.autoSum dt
-    else:
-      result = dt.idx.dummyLoopGen n
+      lhs = n.getlhs
+      lhsIx = t.branch.getlhsix
+      rhsIx = t.branch[^1].idx
+      lhsLocalIx = t.idx - rhsIx
+    # echo "lhs:        ", lhs.lisprepr
+    # echo "lhsLocalIx: ", lhsLocalIx.repr
+    if lhsLocalIx.len > 0:
+      var
+        stmtHead = n
+        lhsTail = lhs
+        constHead = newNimNode(nnkConstSection)
+      for i in lhsLocalIx:
+        let
+          iheadCall = newCall(bindsym"head", i)
+          ihead = gensym(nskConst, "__C__" & i.dummyStr)
+          itail = newCall(bindsym"tail", i)
+        constHead.add(newNimNode(nnkConstDef).add(ihead, newEmptyNode(), iheadCall))
+        stmtHead = stmtHead.convert(i, ihead)
+        lhsTail = lhsTail.convert(i, itail)
+      result = newStmtList().add(
+        constHead, stmtHead, lhsTail.newAssignment stmtHead.getlhs)
+  echo "<<<< splitLhsDuplicate => ", result.repr
+macro splitRhsSum(n: typed): typed =
+  echo "\n>>>> splitRhsSum <= ", n.repr
+  # echo "\n>>>> splitRhsSum <= ", n.treerepr
+  # x[a] = y[a] `op` z[a,b]
+  #  -> x[a] = z[a,b]
+  #     x[a] = y[a] `op` x[a]
+  # x[a,b] = y[a,c] `op` z[b,d]
+  #  -> x[a,b] = y[a,c]
+  #     x[a,b] `op`= z[b,d]
+  let t = n.genDummyTree
+  if n.needAutoSum t:
+    let
+      fun = $n[0]
+      lhs = n.getlhs
+      lhsIx = t.branch.getlhsix
+      rhs = n[^1]
+      rhsT = t.branch[^1]
+      rhsIx = rhsT.idx
+      lhsLocalIx = t.idx - rhsIx
+      rhsLocalIx = t.idx - lhsIx
+      rhsOp = if rhs.kind in CallNodes: $rhs[0] else: ""
+    if rhs.kind in CallNodes and rhsOp in autoSumOps:
+      if rhs.len == 2:          # Unary op.
+        if rhsOp == "+":      # We drop it.
+          result = n.copy
+          result[^1] = rhs[1]
+        elif rhsOp == "-":
+          if rhs[1].kind in CallNodes and $rhs[1][0] != "[]":
+            if n.kind == nnkAsgn or fun == "[]=": # We reuse the lhs.
+              result = newStmtList()
+              result.add lhs.newAssignment rhs[1]
+              result.add lhs.newAssignment lhs.prefix "-"
+            elif fun == "+=":
+              result = n.copy
+              result[0] = bindsym"-="
+            elif fun == "-=":
+              result = n.copy
+              result[0] = bindsym"+="
+            elif fun in ["*=", "/="]:
+              result = n.copy
+              result[^1] = rhs[1]
+              result = newStmtList().add(result, lhs.newAssignment lhs.prefix "-")
+            else:
+              error "AutoSum cannot handle: " & n.repr
+          else:                 # For simple rhs, we do nothing.
+            result = n
+        else:
+          error "AutoSum only supports unary '+' and '-'.  Received: " & n.repr
+      elif rhs.len == 3:        # Binary op of + - * /.
+        let
+          lop = rhs[1]
+          rop = rhs[2]
+          lopIx = rhsT.branch[1].idx
+          ropIx = rhsT.branch[2].idx
+          lopLocalIx = rhsLocalIx - ropIx
+          ropLocalIx = rhsLocalIx - lopIx
+        if lopLocalIx.len > 0:  # Hit ROP in the next round of recursion.
+          error "not implemented for lopLocalIx.len > 0"
+        elif ropLocalIx.len > 0: # Similar to lopLocalIx.len > 0, but we honor order for "*" and "/".
+          error "not implemented for ropLocalIx.len > 0"
+        else:                   # No local index for both operands
+          result = n
+      else:
+        error "AutoSum only supports unary or binary ops.  Received: " & n.repr
+    else:               # RHS is not a call to one of autoSumOps.
+      result = n
   else:
     result = n
-  # echo result.treerepr
-  # echo "<<<< dummyLoop"
-
+  echo "<<<< splitRhsSum => ", result.repr
+proc accumulateAutoSum(n: NimNode): NimNode =
+  echo "\n>>>> accumulateAutoSum <= ", n.repr
+  let t = n.genDummyTree
+  if n.needAutoSum t:
+    let
+      fun = $n[0]
+      lhs = n.getlhs
+      rhs = n[^1]
+      lhsIx = t.branch.getlhsix
+      rhsLocalIx = t.idx - lhsIx
+    if n.kind == nnkAsgn or fun == "[]=":
+      var
+        stmtHead = n
+        constHead = newNimNode(nnkConstSection)
+        accum = newseq[NimNode](rhsLocalIx.len)
+      for m in 0..<accum.len:
+        accum[m] = infix(lhs, "+=", rhs)
+      for n, i in rhsLocalIx:
+        let
+          iheadCall = newCall(bindsym"head", i)
+          ihead = gensym(nskConst, "__C__" & i.dummyStr)
+          itail = newCall(bindsym"tail", i)
+        constHead.add(newNimNode(nnkConstDef).add(ihead, newEmptyNode(), iheadCall))
+        stmtHead = stmtHead.convert(i, ihead)
+        for m in 0..<accum.len:
+          if m < n:
+            accum[m] = accum[m].convert(i, ihead)
+          elif m == n:
+            accum[m] = accum[m].convert(i, itail)
+          # Else, for m > n, do nothing.
+      result = newStmtList().add(constHead, stmtHead)
+      for c in accum:
+        result.add c
+    elif fun in ["*=", "/="]: # Need a temporary.
+      error "not implemented"
+    else:                     # += or -= need no special treatment.
+      result = n
+  else:
+    result = n
+  echo "<<<< accumulateAutoSum => ", result.repr
+macro splitMultiOp(n: typed): typed =
+  echo "\n>>>> splitMultiOp <= ", n.repr
+  result = n
+  echo "<<<< splitMultiOp => ", result.repr
+template fixpointcall(m, n: expr): expr =
+  fixpoint(0, m, n, m(n))
+macro fixpoint(i: static[int], m, oldn, n: typed): typed =
+  # Call m repeatedly on n until nothing changes, with each step
+  # type checked.  Requires m is typed -> typed.
+  echo "\nfixpoint:", m.repr, ":", i, " -----> ", n.repr
+  if oldn == n:
+    return n
+  else:
+    return newCall(bindsym"fixpoint", newLit(i+1), m, n, newCall(m, n))
+macro splittingHelper(n: typed): typed =
+  const splits = @[bindsym"splitLhsDuplicate", bindsym"splitRhsSum", bindsym"splitMultiOp"]
+  proc g(n: NimNode): NimNode =
+    if n.kind == nnkStmtList:
+      result = newStmtList()
+      for i in 0..<n.len:
+        result.add n[i].g
+    elif n.kind == nnkBlockStmt:
+      result = newBlockStmt(n[0], n[1].g)
+    else:
+      result = n
+      for t in splits:
+        result = newCall(t, result)
+  result = n.g
+  echo "splitting: ", result.repr
+template splitting(n: expr): expr =
+  fixpointcall(splittingHelper, n)
+macro autoSum(n: typed): typed =
+  echo "\n>>>> autoSum <= ", n.repr
+  proc g(n: NimNode): NimNode =
+    if n.kind == nnkStmtList:
+      result = newStmtList()
+      for i in 0..<n.len:
+        result.add n[i].g
+    elif n.kind == nnkBlockStmt:
+      result = newBlockstmt(n[0], n[1].g)
+    else:
+      result = n.accumulateAutoSum
+  result = n.g
+  echo "<<<< autoSum => ", result.repr
+macro looping(n: typed): typed =
+  echo "\n>>>> looping: <= ", n.repr
+  proc g(n: NimNode): NimNode =
+    echo "\n>>>> looping:g <= ", n.repr
+    if n.kind == nnkStmtList:
+      result = newStmtList()
+      for i in 0..<n.len:
+        result.add n[i].g
+    elif n.kind == nnkBlockStmt:
+      result = newBlockstmt(n[0], n[1].g)
+    else:
+      let
+        t = n.genDummyTree
+        lhsIx = t.branch.getlhsix
+        rhsLocalIx = t.idx - lhsIx
+        otherIx = t.idx - rhsLocalIx
+      # echo t.treerepr
+      result = rhsLocalIx.dummyLoopGen otherIx.dummyLoopGen n
+    echo "<<<< looping:g => ", result.repr
+  result = n.g
+  echo "<<<< looping => ", result.repr
+macro fusionHelper(n: typed): typed =
+  echo "\n>>>> fusion <= ", n.repr
+  proc g(n: NimNode): NimNode =
+    echo "#### fusion:g <= ", n.repr
+    if n.kind == nnkStmtList:
+      result = newStmtList()
+      var i = 0
+      while i < n.len:
+        let
+          fst = n[i]
+          snd = if i < n.len-1: n[i+1] else: newEmptyNode()
+        if fst.kind == nnkForStmt and snd.kind == nnkForStmt and
+           fst.len == snd.len and fst[^2] == snd[^2]: # ^2 is loop range.
+          var forstmt = newNimNode(nnkForStmt)
+          for j in 0..<fst.len-1:
+            forstmt.add fst[j]
+          var sndBody = snd[^1]
+          for j in 0..<snd.len-2: # All loop variables.
+            sndBody = sndBody.replace(snd[j], fst[j])
+          forstmt.add newStmtList().add(fst[^1], sndBody)
+          result.add forstmt
+          inc i, 2
+        else:
+          result.add fst.g
+          inc i
+    elif n.kind == nnkBlockStmt:
+      result = newBlockstmt(n[0], n[1].g)
+    elif n.kind == nnkForStmt and n[^1].kind == nnkStmtList:
+      result = newNimNode(nnkForStmt)
+      for j in 0..<n.len-1:
+        result.add n[j]
+      result.add n[^1].g
+    else:
+      result = n
+    echo "<<<< fusion:g => ", result.repr
+  result = n.g
+  echo "<<<< fusion => ", result.repr
+template fusion(n: expr): expr =
+  fixpointcall(fusionHelper, n)
 macro tensorOps*(n: typed): typed =
   # echo "\n>>>> tensorOps"
-  result = newStmtList()
-  if n.kind == nnkStmtList:
-    for s in n:
-      result.add s.dummyLoop
-  else:
-    result.add n.dummyLoop
+  # echo "tensorOps received: ", n.repr
+  const transforms = @[bindsym"splitting", bindsym"autoSum", bindsym"looping", bindsym"fusion"]
+  result = n
+  for t in transforms:
+    result = newCall(t, result)
   # echo result.treerepr
   # echo result.repr
   # echo "<<<< tensorOps"
@@ -492,16 +723,15 @@ proc `$`*(v: gT1): string =
     i: Dummy(IndexType(v, 1))
     s = ""
   tensorOps:
-    block:
-      if i == i.type.lo:
-        s = "["
-      else:
-        s &= "\t"
-      s &= $v[i]
-      if i < i.type.hi:
-        s &= ","
-      else:
-        s &= "\t]"
+    if i == i.type.lo:
+      s = "["
+    else:
+      s &= "\t"
+    s &= $v[i]
+    if i < i.type.hi:
+      s &= ","
+    else:
+      s &= "\t]"
   return s
 proc `$`*(m: gT2): string =
   var
@@ -510,21 +740,20 @@ proc `$`*(m: gT2): string =
     # k: Dummy(IndexType(m, 0)) # compile time error: out of bounds
     s = ""
   tensorOps:
-    block:
-      if i == i.type.lo:
-        if j == j.type.lo:
-          s &= "[[ "
-        else:
-          s &= "\n [ "
+    if i == i.type.lo:
+      if j == j.type.lo:
+        s &= "[[ "
       else:
-        s &= "\t"
-      s &= $m[i,j]
-      if i < i.type.hi:
-        s &= ","
-      else:
-        s &= "\t]"
-        if j == j.type.hi:
-          s &= "]"
+        s &= "\n [ "
+    else:
+      s &= "\t"
+    s &= $m[i,j]
+    if i < i.type.hi:
+      s &= ","
+    else:
+      s &= "\t]"
+      if j == j.type.hi:
+        s &= "]"
   return s
 
 when isMainModule:
@@ -615,6 +844,8 @@ when isMainModule:
       m[a, b] = (a-1.0)*10.0/float(10^b)
       echo "  m =\n", m
       x[a] = if a == 1: 1.0 elif a == 2: 1e-2 elif a == 3: 1e-4 else: 1e-6
+      # x[a] = 1.0*a
+      # echo x[a]
       echo "  x = ", x
     echo "\n  * test auto sum"
     var
@@ -641,14 +872,15 @@ when isMainModule:
       echo "  X_ab = m_ac I_ca =\n", X
       X[a,b] = m[c,d]
       echo "  X_ab = m_cd =\n", X
-      # x[a] = a + m[a,b]*y[b]
-      # echo "  x_a = m_ab y_b = ", x
+    when false:
+      x[a] = 1.0 + m[a,b]*y[b]
+      echo "  x_a = m_ab y_b = ", x
       # X[a,b] = I[b,c]*x[c]*(m[c,d]*y[d])
       # echo "  X =\n", X
       # y[a] = m[a,b] * x[b] + x[a]
       # echo "  y = ", y
 
-#[
+when false:
   block:
     echo "\n* test nested"
     type
@@ -663,4 +895,3 @@ when isMainModule:
     tensorOps:
       m[mu,nu][i] = 1.0*i*nu
     echo m
-]#
