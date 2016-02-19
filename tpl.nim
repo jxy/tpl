@@ -1,6 +1,5 @@
 import macros
 import strutils
-import math
 
 iterator pairs(n: NimNode): (int, NimNode) =
   for i in 0..<n.len:
@@ -171,7 +170,7 @@ iterator items*[id,lo,hi:static[int]](t: typedesc[gTindex[id,lo,hi]]): t =
     yield i
     if i.i == hi: break
     inc i.i
-proc `$`[id,lo,hi:static[int]](x: gTindex[id,lo,hi]): string =
+proc `$`*[id,lo,hi:static[int]](x: gTindex[id,lo,hi]): string =
   $x.i & ":Idx[" & $id & "," & $lo & "," & $hi & "]"
 var IndexID {.compileTime.} = 0
 proc nextIndexID: int {.compileTime.} =
@@ -200,12 +199,6 @@ type
     data: array[lo1..hi1,V]
   gT2[V;id1,lo1,hi1,id2,lo2,hi2:static[int]] = object
     data: array[lo2..hi2,array[lo1..hi1,V]]
-template Tensor*(t: typedesc, i1: typedesc): expr =
-  type Tensor = genTensorType(t, i1.id, i1.lo, i1.hi)
-  Tensor
-template Tensor*(t: typedesc, i1: typedesc, i2: typedesc): expr =
-  type Tensor = genTensorType(t, i1.id, i1.lo, i1.hi, i2.id, i2.lo, i2.hi)
-  Tensor
 macro genTensorType(t: typed, ix: varargs[int]): expr =
   # echo "\n>>>> genTensorType"
   let n = ix.len div 3
@@ -217,6 +210,12 @@ macro genTensorType(t: typed, ix: varargs[int]): expr =
     result.add i
   # debug result
   # echo "<<<< genTensorType"
+template Tensor*(t: typedesc, i1: typedesc): expr =
+  type Tensor = genTensorType(t, i1.id, i1.lo, i1.hi)
+  Tensor
+template Tensor*(t: typedesc, i1: typedesc, i2: typedesc): expr =
+  type Tensor = genTensorType(t, i1.id, i1.lo, i1.hi, i2.id, i2.lo, i2.hi)
+  Tensor
 
 # indexing
 proc `[]`*[V;id1,lo1,hi1:static[int]](x: gT1[V,id1,lo1,hi1], i1: gTindex[id1,lo1,hi1]): V {.inline.} =
@@ -302,14 +301,6 @@ proc `[]=`*[V;id1,lo1,hi1,id2,lo2,hi2:static[int]](x: var gT2[V,id1,lo1,hi1,id2,
 
 ####################
 # tensor ops
-template staticfor[id,lo,hi:static[int]](i: untyped, t: typedesc[gTindex[id,lo,hi]], n: untyped): expr =
-  unrollfor j, lo, hi:
-    staticforbody(i, j, t, n)
-template staticfor[id,lo,hi:static[int]](i: untyped, t: typedesc[gTindexDummy[id,lo,hi]], n: untyped): expr =
-  type Index = gTindex[id,lo,hi]
-  staticfor(i,Index,n)
-template staticfor[id,lo,hi:static[int]](i: untyped, d: gTindexDummy[id,lo,hi], n: untyped): expr =
-  staticfor(i,d.type,n)
 macro staticforbody(i: untyped, j: int, t: untyped, n: untyped): untyped =
   # echo "\n>>>> staticfor"
   let
@@ -318,7 +309,15 @@ macro staticforbody(i: untyped, j: int, t: untyped, n: untyped): untyped =
   # echo result.treerepr
   # echo result.repr
   # echo "<<<< staticfor"
-macro staticforstmt(n: typed): untyped =
+template staticfor*[id,lo,hi:static[int]](i: untyped, t: typedesc[gTindex[id,lo,hi]], n: untyped): expr =
+  unrollfor j, lo, hi:
+    staticforbody(i, j, t, n)
+template staticfor*[id,lo,hi:static[int]](i: untyped, t: typedesc[gTindexDummy[id,lo,hi]], n: untyped): expr =
+  type Index = gTindex[id,lo,hi]
+  staticfor(i,Index,n)
+template staticfor*[id,lo,hi:static[int]](i: untyped, d: gTindexDummy[id,lo,hi], n: untyped): expr =
+  staticfor(i,d.type,n)
+macro staticforstmt*(n: typed): untyped =
   # echo "\n>>>> staticforstmt"
   # echo n.treerepr
   expectKind(n, nnkForStmt)
@@ -382,9 +381,9 @@ proc genDummyTree(n: NimNode): dummyTree =
     # }
     result = n.kind in {nnkConstSection, nnkVarSection, nnkLetSection}
     result = result or n.kind == nnkForStmt and i < 2 # We check only the body.
-    if result:
-      echo "skipDummyCheck ", i, " ", n.lisprepr
-      echo "    => ", result
+    # if result:
+    #   echo "skipDummyCheck ", i, " ", n.lisprepr
+    #   echo "    => ", result
   result.idx.init
   newseq result.branch, n.len
   if n.isDummyType:
@@ -458,7 +457,7 @@ proc needAutoSum(n: NimNode, t: dummyTree): bool =
   result = n.kind == nnkAsgn or (n.kind in CallNodes and $n[0].symbol in autoSumFunctions) and
     rhsLocalIx.len > 0
 macro splitLhsDuplicate(n: typed): stmt =
-  echo "\n>>>> splitLhsDuplicate <= ", n.repr
+  # echo "\n>>>> splitLhsDuplicate <= ", n.repr
   # x[a,b] = y[b]
   #  -> x[a.head,b] = y[b]
   #     x[a.tail,b] = x[a.head,b]
@@ -497,9 +496,9 @@ macro splitLhsDuplicate(n: typed): stmt =
       result = newStmtList().add(constHead, stmtHead)
       for c in lhsTail:
         result.add c.newAssignment stmtHead.getlhs
-  echo "<<<< splitLhsDuplicate => ", result.repr
+  # echo "<<<< splitLhsDuplicate => ", result.repr
 macro splitRhsSum(n: typed): stmt =
-  echo "\n>>>> splitRhsSum <= ", n.repr
+  # echo "\n>>>> splitRhsSum <= ", n.repr
   # echo "\n>>>> splitRhsSum <= ", n.treerepr
   # x[a] = y[a] `op` z[a,b]
   #  -> x[a] = z[a,b]
@@ -566,13 +565,13 @@ macro splitRhsSum(n: typed): stmt =
       result = n
   else:
     result = n
-  echo "<<<< splitRhsSum => ", result.repr
+  # echo "<<<< splitRhsSum => ", result.repr
 macro splitMultiOp(n: typed): stmt =
-  echo "\n>>>> splitMultiOp <= ", n.repr
+  # echo "\n>>>> splitMultiOp <= ", n.repr
   result = n
-  echo "<<<< splitMultiOp => ", result.repr
+  # echo "<<<< splitMultiOp => ", result.repr
 proc accumulateAutoSum(n: NimNode): NimNode =
-  echo "\n>>>> accumulateAutoSum <= ", n.repr
+  # echo "\n>>>> accumulateAutoSum <= ", n.repr
   let t = n.genDummyTree
   if n.needAutoSum t:
     let
@@ -610,18 +609,18 @@ proc accumulateAutoSum(n: NimNode): NimNode =
       result = n
   else:
     result = n
-  echo "<<<< accumulateAutoSum => ", result.repr
-template fixpointcall(m, n: untyped): expr =
-  fixpoint(0, m, newEmptyNode(), n)
+  # echo "<<<< accumulateAutoSum => ", result.repr
 macro fixpoint(i: int, m, oldn, n: typed): stmt =
   # Call m repeatedly on n until nothing changes, with each step
   # type checked.  Requires m accepting a typed.
   let ii = i.intVal
-  echo "\nfixpoint:", m.repr, ":", ii, " -----> ", n.repr
+  # echo "\nfixpoint:", m.repr, ":", ii, " -----> ", n.repr
   if ii == 0 or oldn != n:
     return newCall(bindsym"fixpoint", newLit(ii+1), m, n, newCall(m, n))
   else:
     return n
+template fixpointcall(m, n: untyped): expr =
+  fixpoint(0, m, newEmptyNode(), n)
 macro splittingHelper(n: untyped): stmt =
   # const splits = @[bindsym"splitLhsDuplicate", bindsym"splitRhsSum", bindsym"splitMultiOp"]
   proc g(m, n: NimNode): NimNode =
@@ -644,7 +643,7 @@ macro splittingHelper(n: untyped): stmt =
 template splitting(n: untyped): expr =
   fixpointcall(splittingHelper, n)
 macro autoSum(n: typed): stmt =
-  echo "\n>>>> autoSum <= ", n.repr
+  # echo "\n>>>> autoSum <= ", n.repr
   proc g(n: NimNode): NimNode =
     if n.kind == nnkStmtList:
       result = newStmtList()
@@ -658,7 +657,7 @@ macro autoSum(n: typed): stmt =
     else:
       result = n.accumulateAutoSum
   result = n.g
-  echo "<<<< autoSum => ", result.repr
+  # echo "<<<< autoSum => ", result.repr
 proc loopDummy(n: NimNode): NimNode =
   let
     t = n.genDummyTree
@@ -667,7 +666,7 @@ proc loopDummy(n: NimNode): NimNode =
     otherIx = t.idx - rhsLocalIx
   result = rhsLocalIx.dummyLoopGen otherIx.dummyLoopGen n
 macro looping(n: typed): stmt =
-  echo "\n>>>> looping: <= ", n.repr
+  # echo "\n>>>> looping: <= ", n.repr
   proc g(n: NimNode): NimNode =
     # echo "\n>>>> looping:g <= ", n.repr
     if n.kind == nnkStmtList:
@@ -690,7 +689,7 @@ macro looping(n: typed): stmt =
       # result = rhsLocalIx.dummyLoopGen otherIx.dummyLoopGen n
     # echo "<<<< looping:g => ", result.repr
   result = n.g
-  echo "<<<< looping => ", result.repr
+  # echo "<<<< looping => ", result.repr
 macro fusionHelper(n: typed): stmt =
   # echo "\n>>>> fusion <= ", n.repr
   proc g(n: NimNode): NimNode =
@@ -733,20 +732,19 @@ macro fusionHelper(n: typed): stmt =
   # echo "<<<< fusion => ", result.repr
 template fusion(n: untyped): expr =
   fixpointcall(fusionHelper, n)
+macro showResult(n: typed): stmt =
+  result = n
+  hint "tensorOps => " & n.repr
 macro tensorOps*(n: untyped): stmt =
   template tensorOpsHelper(n: untyped): expr =
-    fusion looping autoSum splitting n
+    showResult fusion looping autoSum splitting n
   if n.kind in RoutineNodes:
     result = n
     result[6] = newCall(bindsym"tensorOpsHelper", n[6])
   else:
     result = newCall(bindsym"tensorOpsHelper", n)
 
-proc `$`*(v: gT1): string {.tensorOps.} =
-  # We don't need to put explicit generic params.
-  # Using `IndexType(T,N)` we can get the type.
-  # Thus we can avoid exporting implementation details,
-  # and users can write generic code for their tensors.
+proc `$`*[V;id1,lo1,hi1:static[int]](v: gT1[V,id1,lo1,hi1]): string {.tensorOps.} =
   var i: Dummy(IndexType(v, 1))
   result = ""
   if i == i.type.lo:
@@ -758,7 +756,7 @@ proc `$`*(v: gT1): string {.tensorOps.} =
     result &= ","
   else:
     result &= "\t]"
-proc `$`*(m: gT2): string {.tensorOps.} =
+proc `$`*[V;id1,lo1,hi1,id2,lo2,hi2:static[int]](m: gT2[V,id1,lo1,hi1,id2,lo2,hi2]): string {.tensorOps.} =
   var
     i: Dummy(IndexType(m, 1))
     j: Dummy(IndexType(m, 2))
@@ -778,142 +776,3 @@ proc `$`*(m: gT2): string {.tensorOps.} =
     result &= "\t]"
     if j == j.type.hi:
       result &= "]"
-
-when isMainModule:
-  type
-    Spin = IndexType(1,4)
-    Color = IndexType(1,4)
-  block:
-    echo "\n* test index types"
-    assert(not(Spin is Color), "Spin shouldn't be the same as Color")
-    var
-      s: Spin
-      # The following 3 are syntactically equivalent
-      # ss = 5.index(Spin)            # compile time error: out of bounds
-      c = Color.index 2
-      # c2 = index(Color,0)           # compile time error: out of bounds
-    echo c
-    c.index = 1
-    echo c
-    echo s, "  initialized to 0, which is bad, how can we check?"
-    # s = Color.index(3)          # compile time error: wrong type
-    # s = Spin.index(9)           # compile time error: out of bounds
-    const
-      one = 1
-      two = 2
-    s = Spin.index(two * one)
-    echo s
-
-  block:
-    echo "\n* test static and non static loops"
-    var
-      v, sv: Tensor(float, Spin)
-    echo "\n  * staticfor"
-    # staticfor i, Color:         # compile time error: type mismatch
-    #   sv[i] = i * 0.1 + 1.0
-    staticfor i, Spin:
-      sv[i] = i * 0.1 + 1.0
-      echo "  [", i, "]: ", sv[i]
-    echo "\n  * staticforstmt"
-    staticforstmt:
-      for i in Spin:
-        v[i] += i * 10.0 - 10.0
-        v[i] += 100.0
-        echo "  [", i, "]: ", v[i]+`*`(2.0,sv[i])
-        echo "  [", i, "]: ", v[i]+2.0*sv[i]
-    echo "\n  * non static, but safe"
-    for i in Spin:
-      echo "  [", i, "]: ", sv[i]
-
-  block:
-    echo "\n* test arithmatic with indices"
-    type
-      s2 = IndexType(3, 4)
-      c3 = IndexType(0, 2)
-    var
-      scv: Tensor(float, s2, c3)
-    for j in c3:
-      for i in s2:
-        scv[i,j] = float i*10+j
-        echo "[", i, ",", j, "]: ", scv[i,j]
-
-  block:
-    var
-      a, b: Dummy(Spin)
-      x, y: Tensor(float, Spin)
-      m: Tensor(float, Spin, Spin)
-      mn: float
-    echo "\n* test dummy"
-    echo "\n  * test staticfor dummy"
-    mn = 0
-    staticfor i, a:
-      m[i, Spin.index(2)] = (i-1.0)*0.1
-      echo "  m[",i,",2] = ",m[i,Spin.index(2)]
-      mn += m[i,i]
-      echo "  mn = ", mn
-    echo "\n  * test staticforstmt dummy"
-    block:
-      staticforstmt:
-        for i in a:             # Dummy works as loop range
-          m[i, Spin.index(1)] = (i-1.0)*1.0
-          echo "  m[",i,",1] = ",m[i,Spin.index(1)]
-    echo "\n  * test for dummy"
-    block:
-      for i in a:               # Dummy works as loop range
-        m[i, Spin.index(1)] = m[i, Spin.index(1)] + 100.0
-        echo "  m[",i,",1] = ",m[i,Spin.index(1)]
-    echo "\n  * test auto loop dummy"
-    tensorOps:
-      m[a, b] = (a-1.0)*10.0/float(10^b)
-      echo "  m =\n", m
-      x[a] = if a == 1: 1.0 elif a == 2: 1e-2 elif a == 3: 1e-4 else: 1e-6
-      # x[a] = 1.0*a
-      # echo x[a]
-      echo "  x = ", x
-    echo "\n  * test auto sum"
-    var
-      c, d: a.type
-      X, I: Tensor(float, Spin, Spin)
-    tensorOps:
-      I[a,a] = 1.0
-      echo "  I =\n", I
-    tensorOps:
-      mn = 0
-      mn += I[a,b]*I[b,a]
-      echo "  I_ab I_ba = ", mn
-      X[a,b] = I[a,c]*m[c,b]
-      echo "  X_ab = I_ac m_cb =\n", X
-      mn = I[a,b]*m[b,a]
-      echo "  I_ab m_ba = ", mn
-      y[b] = m[a,b]
-      echo "  y_b = m_ab = ", y
-      x[a] = m[a,b]*y[b]
-      echo "  x_a = m_ab y_b = ", x
-      mn = m[a,b] * m[a,b]
-      echo "  m.norm2 = ", mn
-      X[a,b] = m[a,c]*I[c,a]
-      echo "  X_ab = m_ac I_ca =\n", X
-      X[a,b] = m[c,d]
-      echo "  X_ab = m_cd =\n", X
-    when false:
-      x[a] = 1.0 + m[a,b]*y[b]
-      echo "  x_a = m_ab y_b = ", x
-      # X[a,b] = I[b,c]*x[c]*(m[c,d]*y[d])
-      # echo "  X =\n", X
-      # y[a] = m[a,b] * x[b] + x[a]
-      # echo "  y = ", y
-
-  block:
-    echo "\n* test nested"
-    type
-      inT = IndexType(0,1)
-      In = Tensor(float, inT)
-      Color = IndexType(0,2)
-      cm = Tensor(In, Color, Color)
-    var
-      i: inT.Dummy
-      mu, nu: Color.Dummy
-      m: cm
-    tensorOps:
-      m[mu,nu][i] = 1.0*i*nu + 0.1*mu
-      echo m
