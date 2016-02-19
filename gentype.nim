@@ -457,7 +457,7 @@ proc needAutoSum(n: NimNode, t: dummyTree): bool =
   let rhsLocalIx = t.idx - t.branch.getlhsix
   result = n.kind == nnkAsgn or (n.kind in CallNodes and $n[0].symbol in autoSumFunctions) and
     rhsLocalIx.len > 0
-macro splitLhsDuplicate(n: typed): untyped =
+macro splitLhsDuplicate(n: typed): stmt =
   echo "\n>>>> splitLhsDuplicate <= ", n.repr
   # x[a,b] = y[b]
   #  -> x[a.head,b] = y[b]
@@ -498,7 +498,7 @@ macro splitLhsDuplicate(n: typed): untyped =
       for c in lhsTail:
         result.add c.newAssignment stmtHead.getlhs
   echo "<<<< splitLhsDuplicate => ", result.repr
-macro splitRhsSum(n: typed): untyped =
+macro splitRhsSum(n: typed): stmt =
   echo "\n>>>> splitRhsSum <= ", n.repr
   # echo "\n>>>> splitRhsSum <= ", n.treerepr
   # x[a] = y[a] `op` z[a,b]
@@ -567,6 +567,10 @@ macro splitRhsSum(n: typed): untyped =
   else:
     result = n
   echo "<<<< splitRhsSum => ", result.repr
+macro splitMultiOp(n: typed): stmt =
+  echo "\n>>>> splitMultiOp <= ", n.repr
+  result = n
+  echo "<<<< splitMultiOp => ", result.repr
 proc accumulateAutoSum(n: NimNode): NimNode =
   echo "\n>>>> accumulateAutoSum <= ", n.repr
   let t = n.genDummyTree
@@ -607,21 +611,18 @@ proc accumulateAutoSum(n: NimNode): NimNode =
   else:
     result = n
   echo "<<<< accumulateAutoSum => ", result.repr
-macro splitMultiOp(n: typed): untyped =
-  echo "\n>>>> splitMultiOp <= ", n.repr
-  result = n
-  echo "<<<< splitMultiOp => ", result.repr
-template fixpointcall(m, n: untyped): untyped =
+template fixpointcall(m, n: untyped): expr =
   fixpoint(0, m, newEmptyNode(), n)
-macro fixpoint(i: static[int], m, oldn, n: typed): untyped =
+macro fixpoint(i: int, m, oldn, n: typed): stmt =
   # Call m repeatedly on n until nothing changes, with each step
-  # type checked.  Requires m is typed -> typed.
-  echo "\nfixpoint:", m.repr, ":", i, " -----> ", n.repr
-  if i == 0 or oldn != n:
-    return newCall(bindsym"fixpoint", newLit(i+1), m, n, newCall(m, n))
+  # type checked.  Requires m accepting a typed.
+  let ii = i.intVal
+  echo "\nfixpoint:", m.repr, ":", ii, " -----> ", n.repr
+  if ii == 0 or oldn != n:
+    return newCall(bindsym"fixpoint", newLit(ii+1), m, n, newCall(m, n))
   else:
     return n
-macro splittingHelper(n: untyped): untyped =
+macro splittingHelper(n: untyped): stmt =
   # const splits = @[bindsym"splitLhsDuplicate", bindsym"splitRhsSum", bindsym"splitMultiOp"]
   proc g(m, n: NimNode): NimNode =
     # echo "\n## splittingHelper:g <= ", n.treerepr
@@ -640,9 +641,9 @@ macro splittingHelper(n: untyped): untyped =
       #   result = newCall(t, result)
     # echo "## splittingHelper:g => ", result.treerepr
   result = bindsym"splitMultiOp".g bindsym"splitRhsSum".g bindsym"splitLhsDuplicate".g n
-template splitting(n: untyped): untyped =
+template splitting(n: untyped): expr =
   fixpointcall(splittingHelper, n)
-macro autoSum(n: typed): untyped =
+macro autoSum(n: typed): stmt =
   echo "\n>>>> autoSum <= ", n.repr
   proc g(n: NimNode): NimNode =
     if n.kind == nnkStmtList:
@@ -658,7 +659,14 @@ macro autoSum(n: typed): untyped =
       result = n.accumulateAutoSum
   result = n.g
   echo "<<<< autoSum => ", result.repr
-macro looping(n: typed): untyped =
+proc loopDummy(n: NimNode): NimNode =
+  let
+    t = n.genDummyTree
+    lhsIx = t.branch.getlhsix
+    rhsLocalIx = t.idx - lhsIx
+    otherIx = t.idx - rhsLocalIx
+  result = rhsLocalIx.dummyLoopGen otherIx.dummyLoopGen n
+macro looping(n: typed): stmt =
   echo "\n>>>> looping: <= ", n.repr
   proc g(n: NimNode): NimNode =
     # echo "\n>>>> looping:g <= ", n.repr
@@ -672,17 +680,18 @@ macro looping(n: typed): untyped =
       result = n
       result[6] = n[6].g
     else:
-      let
-        t = n.genDummyTree
-        lhsIx = t.branch.getlhsix
-        rhsLocalIx = t.idx - lhsIx
-        otherIx = t.idx - rhsLocalIx
-      # echo t.treerepr
-      result = rhsLocalIx.dummyLoopGen otherIx.dummyLoopGen n
+      result = n.loopDummy
+      # let
+      #   t = n.genDummyTree
+      #   lhsIx = t.branch.getlhsix
+      #   rhsLocalIx = t.idx - lhsIx
+      #   otherIx = t.idx - rhsLocalIx
+      # # echo t.treerepr
+      # result = rhsLocalIx.dummyLoopGen otherIx.dummyLoopGen n
     # echo "<<<< looping:g => ", result.repr
   result = n.g
   echo "<<<< looping => ", result.repr
-macro fusionHelper(n: typed): untyped =
+macro fusionHelper(n: typed): stmt =
   # echo "\n>>>> fusion <= ", n.repr
   proc g(n: NimNode): NimNode =
     # echo "#### fusion:g <= ", n.repr
@@ -722,57 +731,53 @@ macro fusionHelper(n: typed): untyped =
     # echo "<<<< fusion:g => ", result.repr
   result = n.g
   # echo "<<<< fusion => ", result.repr
-template fusion(n: untyped): untyped =
+template fusion(n: untyped): expr =
   fixpointcall(fusionHelper, n)
-macro tensorOps*(n: untyped): untyped =
-  # echo "\n>>>> tensorOps"
-  # echo "tensorOps received: ", n.repr
-  const transforms = @[bindsym"splitting", bindsym"autoSum", bindsym"looping", bindsym"fusion"]
-  result = n
-  for t in transforms:
-    result = newCall(t, result)
-  # echo result.treerepr
-  # echo result.repr
-  # echo "<<<< tensorOps"
+macro tensorOps*(n: untyped): stmt =
+  template tensorOpsHelper(n: untyped): expr =
+    fusion looping autoSum splitting n
+  if n.kind in RoutineNodes:
+    result = n
+    result[6] = newCall(bindsym"tensorOpsHelper", n[6])
+  else:
+    result = newCall(bindsym"tensorOpsHelper", n)
 
-proc `$`*(v: gT1): string =
+proc `$`*(v: gT1): string {.tensorOps.} =
   # We don't need to put explicit generic params.
   # Using `IndexType(T,N)` we can get the type.
   # Thus we can avoid exporting implementation details,
   # and users can write generic code for their tensors.
-  tensorOps:
-    var i: Dummy(IndexType(v, 1))
-    result = ""
-    if i == i.type.lo:
-      result = "["
+  var i: Dummy(IndexType(v, 1))
+  result = ""
+  if i == i.type.lo:
+    result = "["
+  else:
+    result &= "\t"
+  result &= $v[i]
+  if i < i.type.hi:
+    result &= ","
+  else:
+    result &= "\t]"
+proc `$`*(m: gT2): string {.tensorOps.} =
+  var
+    i: Dummy(IndexType(m, 1))
+    j: Dummy(IndexType(m, 2))
+    # k: Dummy(IndexType(m, 0)) # compile time error: out of bounds
+  result = ""
+  if i == i.type.lo:
+    if j == j.type.lo:
+      result &= "[[ "
     else:
-      result &= "\t"
-    result &= $v[i]
-    if i < i.type.hi:
-      result &= ","
-    else:
-      result &= "\t]"
-proc `$`*(m: gT2): string =
-  tensorOps:                    # Does not work if put in proc pragma.
-    var
-      i: Dummy(IndexType(m, 1))
-      j: Dummy(IndexType(m, 2))
-      # k: Dummy(IndexType(m, 0)) # compile time error: out of bounds
-    result = ""
-    if i == i.type.lo:
-      if j == j.type.lo:
-        result &= "[[ "
-      else:
-        result &= "\n [ "
-    else:
-      result &= "\t"
-    result &= $m[i,j]
-    if i < i.type.hi:
-      result &= ","
-    else:
-      result &= "\t]"
-      if j == j.type.hi:
-        result &= "]"
+      result &= "\n [ "
+  else:
+    result &= "\t"
+  result &= $m[i,j]
+  if i < i.type.hi:
+    result &= ","
+  else:
+    result &= "\t]"
+    if j == j.type.hi:
+      result &= "]"
 
 when isMainModule:
   type
@@ -901,7 +906,7 @@ when isMainModule:
   block:
     echo "\n* test nested"
     type
-      inT = IndexType(0,3)
+      inT = IndexType(0,1)
       In = Tensor(float, inT)
       Color = IndexType(0,2)
       cm = Tensor(In, Color, Color)
@@ -910,5 +915,5 @@ when isMainModule:
       mu, nu: Color.Dummy
       m: cm
     tensorOps:
-      m[mu,nu][i] = 1.0*i*nu
+      m[mu,nu][i] = 1.0*i*nu + 0.1*mu
       echo m
