@@ -95,8 +95,8 @@ proc convert(n: NimNode, i: NimNode, j: NimNode): NimNode =
   result = go(n,i,j).nn
   # echo result.treerepr
   # echo "<<<< convert"
-template staticint(x): expr =
-  intVal if x.kind == nnkSym: x.symbol.getImpl else: x
+proc staticint(x: NimNode): int =
+  int(intVal(if x.kind == nnkSym: x.symbol.getImpl else: x))
 macro unrollfor(i: untyped, lo, hi: int, n: untyped): stmt =
   # echo "\n>>>> unrollfor"
   # echo n.treerepr
@@ -221,7 +221,7 @@ iterator tail*[id,lo,hi:static[int]](t: gTindexDummy[id,lo,hi]): auto =
       inc i.i
 proc tail*(t: gTindexDummy): type(t) {.nodecl.} = discard
 macro choice(n: int, v: varargs[expr]): expr =
-  let i = n.staticint.int
+  let i = n.staticint
   if i >= 1 and i <= v.len:
     result = v[i-1]
   else:
