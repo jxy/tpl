@@ -2,6 +2,7 @@ import macros
 import strutils
 import seqset
 import utils
+import tensor_data_default
 
 ####################
 # index type
@@ -43,41 +44,53 @@ proc `index=`*[id,lo,hi:static[int]](ix:var gTindex[id,lo,hi], n:static[int]) {.
 ####################
 # tensor types
 type
-  gT1[V;id1,lo1,hi1:static[int]] = object
-    data: array[lo1..hi1,V]
-  gT2[V;id1,lo1,hi1,id2,lo2,hi2:static[int]] = object
-    data: array[lo2..hi2,array[lo1..hi1,V]]
-macro genTensorType(t: typed, ix: varargs[int]): expr =
+  gT1[D,V;id1,lo1,hi1:static[int]] = object
+    data: D
+  gT2[D,V;id1,lo1,hi1,id2,lo2,hi2:static[int]] = object
+    data: D
+macro genTensorType(container, element: typed, ix: varargs[int]): expr =
   # echo "\n>>>> genTensorType"
   let n = ix.len div 3
   case n
-  of 1: result = newNimNode(nnkBracketExpr).add(bindsym"gT1", t)
-  of 2: result = newNimNode(nnkBracketExpr).add(bindsym"gT2", t)
+  of 1: result = newNimNode(nnkBracketExpr).add(bindsym"gT1", container, element)
+  of 2: result = newNimNode(nnkBracketExpr).add(bindsym"gT2", container, element)
   else: error "unimplemented"
   for i in ix:
     result.add i
-  # debug result
+  # echo result.treerepr
   # echo "<<<< genTensorType"
-template Tensor*(t: typedesc, i1: typedesc): expr =
-  type Tensor = genTensorType(t, i1.id, i1.lo, i1.hi)
+template Tensor*(element: typedesc, i1: typedesc): expr =
+  const
+    lo1 = i1.lo
+    hi1 = i1.hi
+  type
+    container = D1[element,lo1,hi1]
+    Tensor = genTensorType(container, element, i1.id, lo1, hi1)
   Tensor
-template Tensor*(t: typedesc, i1: typedesc, i2: typedesc): expr =
-  type Tensor = genTensorType(t, i1.id, i1.lo, i1.hi, i2.id, i2.lo, i2.hi)
+template Tensor*(element: typedesc, i1: typedesc, i2: typedesc): expr =
+  const
+    lo1 = i1.lo
+    hi1 = i1.hi
+    lo2 = i2.lo
+    hi2 = i2.hi
+  type
+    container = D2[element,lo1,hi1,lo2,hi2]
+    Tensor = genTensorType(container, element, i1.id, lo1, hi1, i2.id, lo2, hi2)
   Tensor
 
 # indexing
-proc `[]`*[V;id1,lo1,hi1:static[int]](x: gT1[V,id1,lo1,hi1], i1: gTindex[id1,lo1,hi1]): V {.inline.} =
+proc `[]`*[D,V;id1,lo1,hi1:static[int]](x: gT1[D,V,id1,lo1,hi1], i1: gTindex[id1,lo1,hi1]): V {.inline.} =
   x.data[i1.i]
-proc `[]`*[V;id1,lo1,hi1:static[int]](x: var gT1[V,id1,lo1,hi1], i1: gTindex[id1,lo1,hi1]): var V {.inline.} =
+proc `[]`*[D,V;id1,lo1,hi1:static[int]](x: var gT1[D,V,id1,lo1,hi1], i1: gTindex[id1,lo1,hi1]): var V {.inline.} =
   x.data[i1.i]
-proc `[]`*[V;id1,lo1,hi1,id2,lo2,hi2:static[int]](x: gT2[V,id1,lo1,hi1,id2,lo2,hi2], i1: gTindex[id1,lo1,hi1], i2: gTindex[id2,lo2,hi2]): V {.inline.} =
-  x.data[i2.i][i1.i]
-proc `[]`*[V;id1,lo1,hi1,id2,lo2,hi2:static[int]](x: var gT2[V,id1,lo1,hi1,id2,lo2,hi2], i1: gTindex[id1,lo1,hi1], i2: gTindex[id2,lo2,hi2]): var V {.inline.} =
-  x.data[i2.i][i1.i]
-proc `[]=`*[V;id1,lo1,hi1:static[int]](x: var gT1[V,id1,lo1,hi1], i1: gTindex[id1,lo1,hi1], y: V) {.inline.} =
+proc `[]`*[D,V;id1,lo1,hi1,id2,lo2,hi2:static[int]](x: gT2[D,V,id1,lo1,hi1,id2,lo2,hi2], i1: gTindex[id1,lo1,hi1], i2: gTindex[id2,lo2,hi2]): V {.inline.} =
+  x.data[i1.i, i2.i]
+proc `[]`*[D,V;id1,lo1,hi1,id2,lo2,hi2:static[int]](x: var gT2[D,V,id1,lo1,hi1,id2,lo2,hi2], i1: gTindex[id1,lo1,hi1], i2: gTindex[id2,lo2,hi2]): var V {.inline.} =
+  x.data[i1.i, i2.i]
+proc `[]=`*[D,V;id1,lo1,hi1:static[int]](x: var gT1[D,V,id1,lo1,hi1], i1: gTindex[id1,lo1,hi1], y: V) {.inline.} =
   x.data[i1.i] = y
-proc `[]=`*[V;id1,lo1,hi1,id2,lo2,hi2:static[int]](x: var gT2[V,id1,lo1,hi1,id2,lo2,hi2], i1: gTindex[id1,lo1,hi1], i2: gTindex[id2,lo2,hi2], y: V) {.inline.} =
-  x.data[i2.i][i1.i] = y
+proc `[]=`*[D,V;id1,lo1,hi1,id2,lo2,hi2:static[int]](x: var gT2[D,V,id1,lo1,hi1,id2,lo2,hi2], i1: gTindex[id1,lo1,hi1], i2: gTindex[id2,lo2,hi2], y: V) {.inline.} =
+  x.data[i1.i, i2.i] = y
 
 ####################
 # dummy index type
@@ -119,11 +132,11 @@ macro choice(n: int, v: varargs[expr]): expr =
     result = v[i-1]
   else:
     error "Index number, " & $i & ", out of range [1," & $v.len & "]"
-template IndexType*[V;id1,lo1,hi1:static[int]](t: gT1[V,id1,lo1,hi1], n: int): expr =
+template IndexType*[D,V;id1,lo1,hi1:static[int]](t: gT1[D,V,id1,lo1,hi1], n: int): expr =
   type
     Index1 = gTindex[id1,lo1,hi1]
   choice(n, Index1)
-template IndexType*[V;id1,lo1,hi1,id2,lo2,hi2:static[int]](t: gT2[V,id1,lo1,hi1,id2,lo2,hi2], n: int): expr =
+template IndexType*[D,V;id1,lo1,hi1,id2,lo2,hi2:static[int]](t: gT2[D,V,id1,lo1,hi1,id2,lo2,hi2], n: int): expr =
   type
     Index1 = gTindex[id1,lo1,hi1]
     Index2 = gTindex[id2,lo2,hi2]
@@ -131,21 +144,21 @@ template IndexType*[V;id1,lo1,hi1,id2,lo2,hi2:static[int]](t: gT2[V,id1,lo1,hi1,
 template index*[id,lo,hi:static[int]](d:gTindexDummy[id,lo,hi], n:static[int]): expr =
   index(IndexType(d), n)
 
-proc `[]`*[V;id1,lo1,hi1:static[int]](x: gT1[V,id1,lo1,hi1], i1: gTindexDummy[id1,lo1,hi1]): V {.nodecl.} = discard
-proc `[]`*[V;id1,lo1,hi1:static[int]](x: var gT1[V,id1,lo1,hi1], i1: gTindexDummy[id1,lo1,hi1]): var V {.nodecl.} = discard
-proc `[]=`*[V;id1,lo1,hi1:static[int]](x: var gT1[V,id1,lo1,hi1], i1: gTindexDummy[id1,lo1,hi1], y: V) {.nodecl.} = discard
+proc `[]`*[D,V;id1,lo1,hi1:static[int]](x: gT1[D,V,id1,lo1,hi1], i1: gTindexDummy[id1,lo1,hi1]): V {.nodecl.} = discard
+proc `[]`*[D,V;id1,lo1,hi1:static[int]](x: var gT1[D,V,id1,lo1,hi1], i1: gTindexDummy[id1,lo1,hi1]): var V {.nodecl.} = discard
+proc `[]=`*[D,V;id1,lo1,hi1:static[int]](x: var gT1[D,V,id1,lo1,hi1], i1: gTindexDummy[id1,lo1,hi1], y: V) {.nodecl.} = discard
 
-proc `[]`*[V;id1,lo1,hi1,id2,lo2,hi2:static[int]](x: gT2[V,id1,lo1,hi1,id2,lo2,hi2], i1: gTindexDummy[id1,lo1,hi1], i2: gTindexDummy[id2,lo2,hi2]): V {.nodecl.} = discard
-proc `[]`*[V;id1,lo1,hi1,id2,lo2,hi2:static[int]](x: gT2[V,id1,lo1,hi1,id2,lo2,hi2], i1: gTindex[id1,lo1,hi1], i2: gTindexDummy[id2,lo2,hi2]): V {.nodecl.} = discard
-proc `[]`*[V;id1,lo1,hi1,id2,lo2,hi2:static[int]](x: gT2[V,id1,lo1,hi1,id2,lo2,hi2], i1: gTindexDummy[id1,lo1,hi1], i2: gTindex[id2,lo2,hi2]): V {.nodecl.} = discard
+proc `[]`*[D,V;id1,lo1,hi1,id2,lo2,hi2:static[int]](x: gT2[D,V,id1,lo1,hi1,id2,lo2,hi2], i1: gTindexDummy[id1,lo1,hi1], i2: gTindexDummy[id2,lo2,hi2]): V {.nodecl.} = discard
+proc `[]`*[D,V;id1,lo1,hi1,id2,lo2,hi2:static[int]](x: gT2[D,V,id1,lo1,hi1,id2,lo2,hi2], i1: gTindex[id1,lo1,hi1], i2: gTindexDummy[id2,lo2,hi2]): V {.nodecl.} = discard
+proc `[]`*[D,V;id1,lo1,hi1,id2,lo2,hi2:static[int]](x: gT2[D,V,id1,lo1,hi1,id2,lo2,hi2], i1: gTindexDummy[id1,lo1,hi1], i2: gTindex[id2,lo2,hi2]): V {.nodecl.} = discard
 
-proc `[]`*[V;id1,lo1,hi1,id2,lo2,hi2:static[int]](x: var gT2[V,id1,lo1,hi1,id2,lo2,hi2], i1: gTindexDummy[id1,lo1,hi1], i2: gTindexDummy[id2,lo2,hi2]): var V {.nodecl.} = discard
-proc `[]`*[V;id1,lo1,hi1,id2,lo2,hi2:static[int]](x: var gT2[V,id1,lo1,hi1,id2,lo2,hi2], i1: gTindex[id1,lo1,hi1], i2: gTindexDummy[id2,lo2,hi2]): var V {.nodecl.} = discard
-proc `[]`*[V;id1,lo1,hi1,id2,lo2,hi2:static[int]](x: var gT2[V,id1,lo1,hi1,id2,lo2,hi2], i1: gTindexDummy[id1,lo1,hi1], i2: gTindex[id2,lo2,hi2]): var V {.nodecl.} = discard
+proc `[]`*[D,V;id1,lo1,hi1,id2,lo2,hi2:static[int]](x: var gT2[D,V,id1,lo1,hi1,id2,lo2,hi2], i1: gTindexDummy[id1,lo1,hi1], i2: gTindexDummy[id2,lo2,hi2]): var V {.nodecl.} = discard
+proc `[]`*[D,V;id1,lo1,hi1,id2,lo2,hi2:static[int]](x: var gT2[D,V,id1,lo1,hi1,id2,lo2,hi2], i1: gTindex[id1,lo1,hi1], i2: gTindexDummy[id2,lo2,hi2]): var V {.nodecl.} = discard
+proc `[]`*[D,V;id1,lo1,hi1,id2,lo2,hi2:static[int]](x: var gT2[D,V,id1,lo1,hi1,id2,lo2,hi2], i1: gTindexDummy[id1,lo1,hi1], i2: gTindex[id2,lo2,hi2]): var V {.nodecl.} = discard
 
-proc `[]=`*[V;id1,lo1,hi1,id2,lo2,hi2:static[int]](x: var gT2[V,id1,lo1,hi1,id2,lo2,hi2], i1: gTindexDummy[id1,lo1,hi1], i2: gTindexDummy[id2,lo2,hi2], y: V) {.nodecl.} = discard
-proc `[]=`*[V;id1,lo1,hi1,id2,lo2,hi2:static[int]](x: var gT2[V,id1,lo1,hi1,id2,lo2,hi2], i1: gTindex[id1,lo1,hi1], i2: gTindexDummy[id2,lo2,hi2], y: V) {.nodecl.} = discard
-proc `[]=`*[V;id1,lo1,hi1,id2,lo2,hi2:static[int]](x: var gT2[V,id1,lo1,hi1,id2,lo2,hi2], i1: gTindexDummy[id1,lo1,hi1], i2: gTindex[id2,lo2,hi2], y: V) {.nodecl.} = discard
+proc `[]=`*[D,V;id1,lo1,hi1,id2,lo2,hi2:static[int]](x: var gT2[D,V,id1,lo1,hi1,id2,lo2,hi2], i1: gTindexDummy[id1,lo1,hi1], i2: gTindexDummy[id2,lo2,hi2], y: V) {.nodecl.} = discard
+proc `[]=`*[D,V;id1,lo1,hi1,id2,lo2,hi2:static[int]](x: var gT2[D,V,id1,lo1,hi1,id2,lo2,hi2], i1: gTindex[id1,lo1,hi1], i2: gTindexDummy[id2,lo2,hi2], y: V) {.nodecl.} = discard
+proc `[]=`*[D,V;id1,lo1,hi1,id2,lo2,hi2:static[int]](x: var gT2[D,V,id1,lo1,hi1,id2,lo2,hi2], i1: gTindexDummy[id1,lo1,hi1], i2: gTindex[id2,lo2,hi2], y: V) {.nodecl.} = discard
 
 ####################
 # tensor ops
@@ -592,7 +605,7 @@ macro tensorOps*(n: untyped): stmt =
   else:
     result = newCall(bindsym"tensorOpsHelper", n)
 
-proc `$`*[V;id1,lo1,hi1:static[int]](v: gT1[V,id1,lo1,hi1]): string {.tensorOps.} =
+proc `$`*[D,V;id1,lo1,hi1:static[int]](v: gT1[D,V,id1,lo1,hi1]): string {.tensorOps.} =
   var i: Dummy(IndexType(v, 1))
   result = ""
   if i == i.type.lo:
@@ -604,7 +617,7 @@ proc `$`*[V;id1,lo1,hi1:static[int]](v: gT1[V,id1,lo1,hi1]): string {.tensorOps.
     result &= ","
   else:
     result &= "\t]"
-proc `$`*[V;id1,lo1,hi1,id2,lo2,hi2:static[int]](m: gT2[V,id1,lo1,hi1,id2,lo2,hi2]): string {.tensorOps.} =
+proc `$`*[D,V;id1,lo1,hi1,id2,lo2,hi2:static[int]](m: gT2[D,V,id1,lo1,hi1,id2,lo2,hi2]): string {.tensorOps.} =
   var
     i: Dummy(IndexType(m, 1))
     j: Dummy(IndexType(m, 2))
