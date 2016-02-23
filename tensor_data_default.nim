@@ -1,8 +1,13 @@
 type
-  D1*[V;lo1,hi1:static[int]] = object
+  D1[V;lo1,hi1:static[int]] = object
     data: array[lo1..hi1,V]
-  D2*[V;lo1,hi1,lo2,hi2:static[int]] = object
+  D2[V;lo1,hi1,lo2,hi2:static[int]] = object
     data: array[lo2..hi2,array[lo1..hi1,V]]
+
+template TensorDataDefault*(element: typedesc, lo1, hi1: int): expr =
+  D1[element, lo1, hi1]
+template TensorDataDefault*(element: typedesc, lo1, hi1, lo2, hi2: int): expr =
+  D2[element, lo1, hi1, lo2, hi2]
 
 proc `[]`*[V;lo1,hi1:static[int]](x: D1[V,lo1,hi1], i1: int): V {.inline.} =
   x.data[i1]

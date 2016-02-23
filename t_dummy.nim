@@ -28,7 +28,7 @@ block:
 block:
   echo "\n* test static and non static loops"
   var
-    v, sv: Tensor(float, Spin)
+    v, sv: Tensor(float, [Spin])
   echo "\n  * staticfor"
   # staticfor i, Color:         # compile time error: type mismatch
   #   sv[i] = i * 0.1 + 1.0
@@ -52,7 +52,7 @@ block:
     s2 = IndexType(3, 4)
     c3 = IndexType(0, 2)
   var
-    scv: Tensor(float, s2, c3)
+    scv: Tensor(float, [s2, c3])
   for j in c3:
     for i in s2:
       scv[i,j] = float i*10+j
@@ -61,8 +61,8 @@ block:
 block:
   var
     a, b: Dummy(Spin)
-    x, y: Tensor(float, Spin)
-    m: Tensor(float, Spin, Spin)
+    x, y: Tensor(float, [Spin])
+    m: Tensor(float, [Spin, Spin])
     mn: float
   echo "\n* test dummy"
   echo "\n  * test staticfor dummy"
@@ -94,7 +94,7 @@ block:
   echo "\n  * test auto sum"
   var
     c, d: a.type
-    X, I: Tensor(float, Spin, Spin)
+    X, I: Tensor(float, [Spin, Spin])
   tensorOps:
     I[a,a] = 1.0
     echo "  I =\n", I
@@ -128,9 +128,9 @@ block:
   echo "\n* test nested"
   type
     inT = IndexType(0,1)
-    In = Tensor(float, inT)
+    In = Tensor(float, [inT])
     Color = IndexType(0,2)
-    cm = Tensor(In, Color, Color)
+    cm = Tensor(In, [Color, Color])
   var
     i: inT.Dummy
     mu, nu: Color.Dummy

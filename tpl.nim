@@ -59,24 +59,15 @@ macro genTensorType(container, element: typed, ix: varargs[int]): expr =
     result.add i
   # echo result.treerepr
   # echo "<<<< genTensorType"
-template Tensor*(element: typedesc, i1: typedesc): expr =
-  const
-    lo1 = i1.lo
-    hi1 = i1.hi
-  type
-    container = D1[element,lo1,hi1]
-    Tensor = genTensorType(container, element, i1.id, lo1, hi1)
-  Tensor
-template Tensor*(element: typedesc, i1: typedesc, i2: typedesc): expr =
-  const
-    lo1 = i1.lo
-    hi1 = i1.hi
-    lo2 = i2.lo
-    hi2 = i2.hi
-  type
-    container = D2[element,lo1,hi1,lo2,hi2]
-    Tensor = genTensorType(container, element, i1.id, lo1, hi1, i2.id, lo2, hi2)
-  Tensor
+macro Tensor*(element: typed, index: openarray[typed]): expr =
+  var datatype = newCall(bindsym"TensorDataDefault", element)
+  result = newCall(bindsym"genTensorType", datatype, element)
+  proc addDot(d: var NimNode, i: NimNode, id: varargs[string]) =
+    for s in id:
+      d.add(i.newDotExpr s.ident)
+  for i in index:
+    datatype.addDot(i, "lo", "hi")
+    result.addDot(i, "id", "lo", "hi")
 
 # indexing
 proc `[]`*[D,V;id1,lo1,hi1:static[int]](x: gT1[D,V,id1,lo1,hi1], i1: gTindex[id1,lo1,hi1]): V {.inline.} =
