@@ -45,9 +45,9 @@ proc `index=`*[id,lo,hi:static[int]](ix:var gTindex[id,lo,hi], n:static[int]) {.
 # tensor types
 type
   gT1[D,V;id1,lo1,hi1:static[int]] = object
-    data: D
+    data*: D
   gT2[D,V;id1,lo1,hi1,id2,lo2,hi2:static[int]] = object
-    data: D
+    data*: D
 macro genTensorType(container, element: typed, ix: varargs[int]): expr =
   # echo "\n>>>> genTensorType"
   let n = ix.len div 3
@@ -59,15 +59,20 @@ macro genTensorType(container, element: typed, ix: varargs[int]): expr =
     result.add i
   # echo result.treerepr
   # echo "<<<< genTensorType"
-macro Tensor*(element: typed, index: openarray[typed]): expr =
-  var datatype = newCall(bindsym"TensorDataDefault", element)
-  result = newCall(bindsym"genTensorType", datatype, element)
-  proc addDot(d: var NimNode, i: NimNode, id: varargs[string]) =
-    for s in id:
-      d.add(i.newDotExpr s.ident)
+proc addDot(d: var NimNode, i: NimNode, id: varargs[string]) =
+  for s in id:
+    d.add(i.newDotExpr s.ident)
+proc mkTensor(container, element: NimNode, index: NimNode): NimNode =
+  result = newCall(bindsym"genTensortype", container, element)
   for i in index:
-    datatype.addDot(i, "lo", "hi")
     result.addDot(i, "id", "lo", "hi")
+macro Tensor*(container, element: typed, index: openarray[typed]): expr =
+  result = mkTensor(container, element, index)
+macro Tensor*(element: typed, index: openarray[typed]): expr =
+  var container = newCall(bindsym"TensorDataDefault", element)
+  for i in index:
+    container.addDot(i, "lo", "hi")
+  result = mkTensor(container, element, index)
 
 # indexing
 proc `[]`*[D,V;id1,lo1,hi1:static[int]](x: gT1[D,V,id1,lo1,hi1], i1: gTindex[id1,lo1,hi1]): V {.inline.} =
