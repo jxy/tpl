@@ -3,6 +3,15 @@ import seqset
 import utils
 import tensor_data_default
 
+type
+  TPLDebug* {.pure.} = enum
+    none, output, flow
+var
+  TPLDebugLevel {.compileTime.} = TPLDebug.none
+macro setDebug(x: static[TPLDebug], n: typed): typed =
+  TPLDebugLevel = x
+  result = n
+
 ####################
 # index type
 type
@@ -200,13 +209,13 @@ macro prepareDummy*(d: varargs[typed]): stmt =
       conv = "__CONV_DummyU__2__" & i.dummyStr
     result.add getast(convDummyU(ident(conv), i))
 
-template `[]`*[D,V;id1,lo1,hi1,id2,lo2,hi2:static[int]](x: gT2[D,V,id1,lo1,hi1,id2,lo2,hi2], i1: gTindexDummy[id1,lo1,hi1]): V =
+template `[]`*[D,V;id1,lo1,hi1,id2,lo2,hi2:static[int]](x: gT2[D,V,id1,lo1,hi1,id2,lo2,hi2], i1: gTindexDummy[id1,lo1,hi1]): expr =
   `[]`(x, i1, UniversalDummyIndex)
-template `[]`*[D,V;id1,lo1,hi1,id2,lo2,hi2:static[int]](x: gT2[D,V,id1,lo1,hi1,id2,lo2,hi2], i2: gTindexDummy[id2,lo2,hi2]): V =
+template `[]`*[D,V;id1,lo1,hi1,id2,lo2,hi2:static[int]](x: gT2[D,V,id1,lo1,hi1,id2,lo2,hi2], i2: gTindexDummy[id2,lo2,hi2]): expr =
   `[]`(x, UniversalDummyIndex, i2)
-template `[]`*[D,V;id1,lo1,hi1,id2,lo2,hi2:static[int]](x: gT2[D,V,id1,lo1,hi1,id2,lo2,hi2], i1: gTindex[id1,lo1,hi1]): V =
+template `[]`*[D,V;id1,lo1,hi1,id2,lo2,hi2:static[int]](x: gT2[D,V,id1,lo1,hi1,id2,lo2,hi2], i1: gTindex[id1,lo1,hi1]): expr =
   `[]`(x, i1, UniversalDummyIndex)
-template `[]`*[D,V;id1,lo1,hi1,id2,lo2,hi2:static[int]](x: gT2[D,V,id1,lo1,hi1,id2,lo2,hi2], i2: gTindex[id2,lo2,hi2]): V =
+template `[]`*[D,V;id1,lo1,hi1,id2,lo2,hi2:static[int]](x: gT2[D,V,id1,lo1,hi1,id2,lo2,hi2], i2: gTindex[id2,lo2,hi2]): expr =
   `[]`(x, UniversalDummyIndex, i2)
 
 template `[]=`*[D,V;id1,lo1,hi1,id2,lo2,hi2:static[int]](x: gT2[D,V,id1,lo1,hi1,id2,lo2,hi2], i1: gTindexDummy[id1,lo1,hi1], y: V): expr =
@@ -348,7 +357,7 @@ proc needAutoSum(n: NimNode, t: dummyTree): bool =
   result = n.kind == nnkAsgn or (n.kind in CallNodes and $n[0].symbol in autoSumFunctions) and
     rhsLocalIx.len > 0
 
-var dID {.global compiletime.} = 0
+var dID {.compileTime.} = 0
 proc contractDummyU(n: NimNode): NimNode =
   # echo "\n>>>>  <= ", n.treerepr
   type
@@ -484,7 +493,6 @@ proc contractDummyU(n: NimNode): NimNode =
       else:
         result = infix(lhs, $n[0], rhs.replaceIx pairContractRhsIx)
       result = newStmtList().add(ixDecl, result)
-  hint "contractDummyU => " & result.repr
   # echo "<<<< contractDummyU => ", result.treerepr
 macro convertDummyU(n: typed): stmt =
   # echo "\n>>>> convertDummyU <= ", n.treerepr
@@ -829,17 +837,33 @@ macro fusionHelper(n: typed): stmt =
   # hint "<<<< fusion => " & result.treerepr
 template fusion(n: typed): stmt =
   fixpointcall(fusionHelper, n)
-macro showResult(n: typed): stmt =
+macro show(s: string, n: typed): stmt =
+  if TPLDebugLevel > TPLDebug.none:
+    hint s.strval & " :: " & n.repr
   result = n
-  hint "tensorOps => " & n.repr
-macro tensorOps*(n: untyped): stmt =
-  template tensorOpsHelper(n: untyped): stmt =
-    showResult fusion looping autoSum splitting convertDummyU n
+macro showCallResult(n: untyped): stmt =
+  proc g(n: NimNode): NimNode =
+    if n.kind in CallNodes and n.len == 2:
+      result = n.copyNimNode
+      result.add n[0]
+      result.add n[1].g
+      result = newCall(bindsym"show", newlit($n[0]), result)
+    elif n.kind == nnkStmtList and n.len == 1 and n[0].kind in CallNodes:
+      result = n[0].g
+    else:
+      result = n
+  result = n.g
+macro tensorOpsTrace*(verbose: static[TPLDebug], n: untyped): stmt =
+  template tensorOpsHelper(v: TPLDebug, n: untyped): stmt =
+    setDebug(TPLDebug.none, showCallResult fusion looping autoSum splitting convertDummyU setDebug(TPLDebug(v), n))
   if n.kind in RoutineNodes:
     result = n
-    result[6] = getast(tensorOpsHelper(n[6]))
+    result[6] = getast(tensorOpsHelper(verbose, n[6]))
   else:
-    result = getast(tensorOpsHelper(n))
+    result = getast(tensorOpsHelper(verbose, n))
+macro tensorOps*(n: untyped): stmt =
+  quote do:
+    tensorOpsTrace TPLDebug.none, `n`
 
 proc `$`*[D,V;id1,lo1,hi1:static[int]](v: gT1[D,V,id1,lo1,hi1]): string {.tensorOps.} =
   var i: Dummy(IndexType(v, 1))
