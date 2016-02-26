@@ -11,6 +11,7 @@ type
   CSV = Tensor(float, [C,S])
 # prepareAutoIndex(SV, SM, CV, CM, SCV, CSV)
 var
+  x: float
   sv, sv2: SV
   sm: SM
   cv: CV
@@ -25,6 +26,8 @@ tensorOps:
   echo "sv = ", sv
   scv[i] = sv[i]+i
   echo "scv[i] = sv[i]+i =\n", scv
+  x = scv[i]
+  echo "x = scv[i] = ", x
   sv[i] = scv[i]
   echo "sv[i] = scv[i] = ", sv
   scv[i] += sv[i]
@@ -33,10 +36,18 @@ tensorOps:
   echo "sm =\n", sm
   csv[j] = -scv[i]*sm[i,j]
   echo "csv[j] = -scv[i]*sm[i,j] =\n", csv
-tensorOpsTrace TPLDebug.output:
   scv[i] += (i+0.5)*csv[i]
-tensorOps:
   echo "scv[i] += (i+0.5)*csv[i] =\n", scv
+  x = sv*sv
+  echo "x = sv*sv = ", x
+  x = sm*sm
+  echo "x = sm*sm = ", x
+  sv2 += sv * sm
+  echo "sv2 += sv*sm = ", sv2
+  cv += scv * sv
+  echo "cv += scv*sv = ", cv
+  # x = sv*sm*sv
+  # echo "x = sv*sm*sv = ", x
   # sv2 = sv
   # echo "naive asssignment: sv2 = sv = ", sv2
   # sv = 2.0

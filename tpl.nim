@@ -5,10 +5,23 @@ import tensor_data_default
 
 type
   TPLDebug* {.pure.} = enum
-    none, output, flow
+    none, output, flow, detail
 var
   TPLDebugLevel {.compileTime.} = TPLDebug.none
-macro setDebug(x: static[TPLDebug], n: typed): typed =
+proc dbg(s: string = "", n: NimNode = newEmptyNode(), lvl: TPLDebug = TPLDebug.none) =
+  if TPLDebugLevel >= lvl:
+    if TPLDebugLevel >= TPLDebug.detail:
+      echo "DBG:", s, n.treerepr
+    else:
+      echo "DBG:", s, n.repr
+proc dbgOutput(s: string, n: NimNode = newEmptyNode()) =
+  dbg("OUT:"&s, n, TPLDebug.output)
+proc dbgFlow(s: string, n: NimNode = newEmptyNode()) =
+  dbg("FLOW:"&s, n, TPLDebug.flow)
+proc dbgDetail(s: string, n: NimNode = newEmptyNode()) =
+  dbg("DETAIL:"&s, n, TPLDebug.detail)
+macro setDebug(x: static[TPLDebug], n: typed): untyped =
+  dbgDetail "setDebug:", n
   TPLDebugLevel = x
   result = n
 
@@ -226,6 +239,30 @@ template `[]=`*[D,V;id1,lo1,hi1,id2,lo2,hi2:static[int]](x: gT2[D,V,id1,lo1,hi1,
   `[]=`(x, i1, UniversalDummyIndex, y)
 template `[]=`*[D,V;id1,lo1,hi1,id2,lo2,hi2:static[int]](x: gT2[D,V,id1,lo1,hi1,id2,lo2,hi2], i2: gTindex[id2,lo2,hi2], y: V): expr =
   `[]=`(x, UniversalDummyIndex, i2, y)
+
+template genBinOp(op: untyped): stmt =
+  template op*[lD,lV;lid1,llo1,lhi1:static[int]](x: gT1[lD,lV,lid1,llo1,lhi1], y: lV): expr =
+    op(x[UniversalDummyIndex], y)
+  template op*[rD,rV;rid1,rlo1,rhi1:static[int]](x: rV, y: gT1[rD,rV,rid1,rlo1,rhi1]): expr =
+    op(x, y[UniversalDummyIndex])
+  template op*[lD,lV,rD,rV;lid1,llo1,lhi1,rid1,rlo1,rhi1:static[int]](x: gT1[lD,lV,lid1,llo1,lhi1], y: gT1[rD,rV,rid1,rlo1,rhi1]): expr =
+    op(x[UniversalDummyIndex], y[UniversalDummyIndex])
+  template op*[lD,lV;lid1,llo1,lhi1,lid2,llo2,lhi2:static[int]](x: gT2[lD,lV,lid1,llo1,lhi1,lid2,llo2,lhi2], y: lV): expr =
+    op(x[UniversalDummyIndex,UniversalDummyIndex], y)
+  template op*[rD,rV;rid1,rlo1,rhi1,rid2,rlo2,rhi2:static[int]](x: rV, y: gT2[rD,rV,rid1,rlo1,rhi1,rid2,rlo2,rhi2]): expr =
+    op(x, y[UniversalDummyIndex,UniversalDummyIndex])
+  template op*[lD,lV,rD,rV;lid1,llo1,lhi1,lid2,llo2,lhi2,rid1,rlo1,rhi1:static[int]](x: gT2[lD,lV,lid1,llo1,lhi1,lid2,llo2,lhi2], y: gT1[rD,rV,rid1,rlo1,rhi1]): expr =
+    op(x[UniversalDummyIndex,UniversalDummyIndex], y[UniversalDummyIndex])
+  template op*[lD,lV,rD,rV;lid1,llo1,lhi1,rid1,rlo1,rhi1,rid2,rlo2,rhi2:static[int]](x: gT1[lD,lV,lid1,llo1,lhi1], y: gT2[rD,rV,rid1,rlo1,rhi1,rid2,rlo2,rhi2]): expr =
+    op(x[UniversalDummyIndex], y[UniversalDummyIndex,UniversalDummyIndex])
+  template op*[lD,lV,rD,rV;lid1,llo1,lhi1,lid2,llo2,lhi2,rid1,rlo1,rhi1,rid2,rlo2,rhi2:static[int]](x: gT2[lD,lV,lid1,llo1,lhi1,lid2,llo2,lhi2], y: gT2[rD,rV,rid1,rlo1,rhi1,rid2,rlo2,rhi2]): expr =
+    op(x[UniversalDummyIndex,UniversalDummyIndex], y[UniversalDummyIndex,UniversalDummyIndex])
+
+macro genOp(os: varargs[untyped]): stmt =
+  result = newStmtList()
+  for o in os:
+    result.add newCall(bindsym"genBinOp", o)
+genOp(`+`, `-`, `*`, `/`, `+=`, `-=`, `*=`, `/=`)
 
 ####################
 # tensor ops
@@ -488,14 +525,14 @@ proc contractDummyU(n: NimNode): NimNode =
       var ixDecl = newNimNode(nnkVarSection)
       for i in requiredIx:
         ixDecl.add newIdentDefs(i[0], newCall(bindsym"Dummy", ident($i[1])))
-      if $n[0] in ["=", "[]="]:
+      if n.kind == nnkAsgn or $n[0] in ["=", "[]="]:
         result = newAssignment(lhs, rhs.replaceIx pairContractRhsIx)
       else:
         result = infix(lhs, $n[0], rhs.replaceIx pairContractRhsIx)
       result = newStmtList().add(ixDecl, result)
   # echo "<<<< contractDummyU => ", result.treerepr
 macro convertDummyU(n: typed): stmt =
-  # echo "\n>>>> convertDummyU <= ", n.treerepr
+  dbgFlow "convertDummyU <= ", n
   proc g(n: NimNode): NimNode =
     if n.kind == nnkStmtList:
       result = newStmtList()
@@ -511,7 +548,7 @@ macro convertDummyU(n: typed): stmt =
     else:
       result = n.contractDummyU
   result = n.g
-  # echo "<<<< convertDummyU => ", result.treerepr
+  # dbgFlow "convertDummyU => ", result
 
 proc dummyLoopGen(ix: seqset[NimNode], n: NimNode): NimNode =
   proc reCall(n: NimNode): NimNode =
@@ -838,8 +875,7 @@ macro fusionHelper(n: typed): stmt =
 template fusion(n: typed): stmt =
   fixpointcall(fusionHelper, n)
 macro show(s: string, n: typed): stmt =
-  if TPLDebugLevel > TPLDebug.none:
-    hint s.strval & " :: " & n.repr
+  dbgOutput s.strval, n
   result = n
 macro showCallResult(n: untyped): stmt =
   proc g(n: NimNode): NimNode =
