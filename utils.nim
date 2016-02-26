@@ -1,8 +1,13 @@
 import macros
+import strutils
 
 iterator pairs*(n: NimNode): (int, NimNode) =
   for i in 0..<n.len:
     yield(i, n[i])
+proc safeCopyNimNode*(n: NimNode): NimNode =
+  # We just copy it and delete its children.  Workaround a bug in copyNimNode.
+  result = n.copy
+  result.del(0, n.len)
 proc replace*(n: NimNode, i: NimNode, j: NimNode): NimNode =
   # echo "\n>>>> replace"
   # echo n.lisprepr
@@ -23,6 +28,10 @@ proc convert*(n: NimNode, i: NimNode, j: NimNode): NimNode =
   # echo j.treerepr
   proc go(n: NimNode, i: NimNode, j: NimNode): tuple[rep: bool, nn: NimNode] =
     # echo "  ==== go : ", n.lisprepr
+    # if n.kind == nnkCall and i.kind == nnkCall and $i[0] == "tail":
+      # echo "XXXX n: ", n.treerepr
+      # echo "XXXX i: ", i.treerepr
+      # echo "XXXX n == i: ", n == i
     if n == i:
       # echo "  ---- n == i"
       result = (true, j)
@@ -30,8 +39,7 @@ proc convert*(n: NimNode, i: NimNode, j: NimNode): NimNode =
       # echo "A"
       result.rep = false
       # echo "* n: ", n.lisprepr
-      result.nn = n.copy # Sometimes we need to copy before copyNimNode???
-      result.nn.del(0, n.len) # We just copy it and delete its children.
+      result.nn = n.safeCopyNimNode
       # echo "THE node: ", result.nn.lisprepr
       # result.nn = n.copyNimNode # FIXME: we may not need the changes later if we stop using copyNimNode.
       # echo "THE node: ", result.nn.lisprepr
@@ -107,3 +115,17 @@ macro unrollfor*(i: untyped, lo, hi: int, n: untyped): stmt =
   # echo result.treerepr
   # echo result.repr
   # echo "<<<< unrollfor"
+
+proc dummyStr*(n: NimNode): string =
+  let s = n.repr.strip
+  var id = newString(s.len)
+  var j = 0
+  for i in 0..<s.len:
+    if s[i] in IdentChars - {'_'}:
+      id[j] = s[i]
+      inc j
+    elif j > 1 and id[j-1] != '_':
+      id[j] = '_'
+      inc j
+  if j != s.len: id.setLen j
+  return id
