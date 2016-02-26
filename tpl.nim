@@ -189,7 +189,7 @@ proc `[]=`*[D,V;id1,lo1,hi1,id2,lo2,hi2:static[int]](x: var gT2[D,V,id1,lo1,hi1,
 # universal dummy index
 type
   gTindexDummyU = object
-const UniversalDummyIndex* = gTindexDummyU()
+const UniversalDummyIndex = gTindexDummyU()
 macro prepareDummy*(d: varargs[typed]): stmt =
   template convDummyU(cn, t: untyped): stmt =
     converter cn*(x: gTindexDummyU): t {.nodecl.} = discard
@@ -199,6 +199,24 @@ macro prepareDummy*(d: varargs[typed]): stmt =
       id = newCall(bindsym"Dummy", i)
       conv = "__CONV_DummyU__2__" & i.dummyStr
     result.add getast(convDummyU(ident(conv), i))
+
+template `[]`*[D,V;id1,lo1,hi1,id2,lo2,hi2:static[int]](x: gT2[D,V,id1,lo1,hi1,id2,lo2,hi2], i1: gTindexDummy[id1,lo1,hi1]): V =
+  `[]`(x, i1, UniversalDummyIndex)
+template `[]`*[D,V;id1,lo1,hi1,id2,lo2,hi2:static[int]](x: gT2[D,V,id1,lo1,hi1,id2,lo2,hi2], i2: gTindexDummy[id2,lo2,hi2]): V =
+  `[]`(x, UniversalDummyIndex, i2)
+template `[]`*[D,V;id1,lo1,hi1,id2,lo2,hi2:static[int]](x: gT2[D,V,id1,lo1,hi1,id2,lo2,hi2], i1: gTindex[id1,lo1,hi1]): V =
+  `[]`(x, i1, UniversalDummyIndex)
+template `[]`*[D,V;id1,lo1,hi1,id2,lo2,hi2:static[int]](x: gT2[D,V,id1,lo1,hi1,id2,lo2,hi2], i2: gTindex[id2,lo2,hi2]): V =
+  `[]`(x, UniversalDummyIndex, i2)
+
+template `[]=`*[D,V;id1,lo1,hi1,id2,lo2,hi2:static[int]](x: gT2[D,V,id1,lo1,hi1,id2,lo2,hi2], i1: gTindexDummy[id1,lo1,hi1], y: V): expr =
+  `[]=`(x, i1, UniversalDummyIndex, y)
+template `[]=`*[D,V;id1,lo1,hi1,id2,lo2,hi2:static[int]](x: gT2[D,V,id1,lo1,hi1,id2,lo2,hi2], i2: gTindexDummy[id2,lo2,hi2], y: V): expr =
+  `[]=`(x, UniversalDummyIndex, i2, y)
+template `[]=`*[D,V;id1,lo1,hi1,id2,lo2,hi2:static[int]](x: gT2[D,V,id1,lo1,hi1,id2,lo2,hi2], i1: gTindex[id1,lo1,hi1], y: V): expr =
+  `[]=`(x, i1, UniversalDummyIndex, y)
+template `[]=`*[D,V;id1,lo1,hi1,id2,lo2,hi2:static[int]](x: gT2[D,V,id1,lo1,hi1,id2,lo2,hi2], i2: gTindex[id2,lo2,hi2], y: V): expr =
+  `[]=`(x, UniversalDummyIndex, i2, y)
 
 ####################
 # tensor ops
@@ -466,6 +484,7 @@ proc contractDummyU(n: NimNode): NimNode =
       else:
         result = infix(lhs, $n[0], rhs.replaceIx pairContractRhsIx)
       result = newStmtList().add(ixDecl, result)
+  hint "contractDummyU => " & result.repr
   # echo "<<<< contractDummyU => ", result.treerepr
 macro convertDummyU(n: typed): stmt =
   # echo "\n>>>> convertDummyU <= ", n.treerepr
