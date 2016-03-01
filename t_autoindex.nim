@@ -32,7 +32,7 @@ tensorOps:
   echo "sv[i] = scv[i] = ", sv
   scv[i] += sv[i]
   echo "scv[i] += sv[i] =\n", scv
-  sm[i,i] = i+1.0
+  sm[i,j] = i+1.0+0.1*j
   echo "sm =\n", sm
   csv[j] = -scv[i]*sm[i,j]
   echo "csv[j] = -scv[i]*sm[i,j] =\n", csv
@@ -44,12 +44,11 @@ tensorOps:
   echo "x = sm*sm = ", x
   sv2 += sv * sm
   echo "sv2 += sv*sm = ", sv2
-  cv += scv * sv
-  echo "cv += scv*sv = ", cv
+  cv = scv * sv
+  echo "cv = scv*sv = ", cv
   # x = sv*sm*sv
   # echo "x = sv*sm*sv = ", x
-  # sv2 = sv
-  # echo "naive asssignment: sv2 = sv = ", sv2
-  # sv = 2.0
-  # sv2 = 2.0*sv
-  # echo "sv2 = 2.0*sv = ", sv2
+  sv2 = sv
+  echo "naive asssignment: sv2 = sv = ", sv2
+  sv = 2.0*sv
+  echo "sv = 2.0*sv = ", sv2

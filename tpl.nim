@@ -10,20 +10,17 @@ var
   TPLDebugLevel {.compileTime.} = TPLDebug.none
 proc dbg(s: string = "", n: NimNode = newEmptyNode(), lvl: TPLDebug = TPLDebug.none) =
   if TPLDebugLevel >= lvl:
-    if TPLDebugLevel >= TPLDebug.detail:
-      echo "DBG:", s, n.treerepr
+    let ns = if TPLDebugLevel >= TPLDebug.detail: n.treerepr else: n.repr
+    if n == newEmptyNode():
+      echo "DBG:", s
     else:
-      echo "DBG:", s, n.repr
+      echo "DBG:", s, ns
 proc dbgOutput(s: string, n: NimNode = newEmptyNode()) =
   dbg("OUT:"&s, n, TPLDebug.output)
 proc dbgFlow(s: string, n: NimNode = newEmptyNode()) =
   dbg("FLOW:"&s, n, TPLDebug.flow)
 proc dbgDetail(s: string, n: NimNode = newEmptyNode()) =
   dbg("DETAIL:"&s, n, TPLDebug.detail)
-macro setDebug(x: static[TPLDebug], n: typed): untyped =
-  dbgDetail "setDebug:", n
-  TPLDebugLevel = x
-  result = n
 
 ####################
 # index type
@@ -264,6 +261,37 @@ macro genOp(os: varargs[untyped]): stmt =
     result.add newCall(bindsym"genBinOp", o)
 genOp(`+`, `-`, `*`, `/`, `+=`, `-=`, `*=`, `/=`)
 
+template autoIndexAsgn[lD,lV;lid1,llo1,lhi1:static[int]](x: gT1[lD,lV,lid1,llo1,lhi1], y: lV): expr =
+  x[UniversalDummyIndex] = y
+template autoIndexAsgn[rD,rV;rid1,rlo1,rhi1:static[int]](x: rV, y: gT1[rD,rV,rid1,rlo1,rhi1]): expr =
+  x = y[UniversalDummyIndex]
+template autoIndexAsgn[lD,lV,rD,rV;lid1,llo1,lhi1,rid1,rlo1,rhi1:static[int]](x: gT1[lD,lV,lid1,llo1,lhi1], y: gT1[rD,rV,rid1,rlo1,rhi1]): expr =
+  x[UniversalDummyIndex] = y[UniversalDummyIndex]
+template autoIndexAsgn[lD,lV;lid1,llo1,lhi1,lid2,llo2,lhi2:static[int]](x: gT2[lD,lV,lid1,llo1,lhi1,lid2,llo2,lhi2], y: lV): expr =
+  x[UniversalDummyIndex,UniversalDummyIndex] = y
+template autoIndexAsgn[rD,rV;rid1,rlo1,rhi1,rid2,rlo2,rhi2:static[int]](x: rV, y: gT2[rD,rV,rid1,rlo1,rhi1,rid2,rlo2,rhi2]): expr =
+  x = y[UniversalDummyIndex,UniversalDummyIndex]
+template autoIndexAsgn[lD,lV,rD,rV;lid1,llo1,lhi1,lid2,llo2,lhi2,rid1,rlo1,rhi1:static[int]](x: gT2[lD,lV,lid1,llo1,lhi1,lid2,llo2,lhi2], y: gT1[rD,rV,rid1,rlo1,rhi1]): expr =
+  x[UniversalDummyIndex,UniversalDummyIndex] = y[UniversalDummyIndex]
+template autoIndexAsgn[lD,lV,rD,rV;lid1,llo1,lhi1,rid1,rlo1,rhi1,rid2,rlo2,rhi2:static[int]](x: gT1[lD,lV,lid1,llo1,lhi1], y: gT2[rD,rV,rid1,rlo1,rhi1,rid2,rlo2,rhi2]): expr =
+  x[UniversalDummyIndex] = y[UniversalDummyIndex,UniversalDummyIndex]
+template autoIndexAsgn[lD,lV,rD,rV;lid1,llo1,lhi1,lid2,llo2,lhi2,rid1,rlo1,rhi1,rid2,rlo2,rhi2:static[int]](x: gT2[lD,lV,lid1,llo1,lhi1,lid2,llo2,lhi2], y: gT2[rD,rV,rid1,rlo1,rhi1,rid2,rlo2,rhi2]): expr =
+  x[UniversalDummyIndex,UniversalDummyIndex] = y[UniversalDummyIndex,UniversalDummyIndex]
+macro autoIndexAsgn[T](lhs: T, rhs: T): stmt =
+  dbgDetail "autoIndexAsgn <= lhs: ", lhs
+  dbgDetail "autoIndexAsgn <= rhs: ", rhs
+  var lhs = lhs
+  if lhs.kind == nnkHiddenDeref: lhs = lhs[0]
+  if lhs.kind in CallNodes and $lhs[0] == "[]": # Indexing operation
+    result = newNimNode(nnkBracketExpr)
+    # result = newCall(ident"[]=")
+    for i in 1..<lhs.len:
+      result.add lhs[i]
+  else:
+    result = lhs
+  result = newAssignment(result, rhs)
+  dbgDetail "autoIndexAsgn => ", result
+
 ####################
 # tensor ops
 macro staticforbody(i: untyped, j: int, t: untyped, n: untyped): untyped =
@@ -326,15 +354,7 @@ proc genDummyTree(n: NimNode): dummyTree =
       elif n.kind in CallNodes and n[0].kind == nnkSym: n[0].gettype[1]
       else: newEmptyNode()
     # if n.kind in CallNodes and n[0].kind == nnkSym: echo "call type: ", n[0].gettype.lisprepr
-    # if n.kind in CallNodes and n[0].kind == nnkClosedSymChoice:
-    #   echo "  ### ", n[0].gettype.lisprepr
-    #   for c in n[0]:
-    #     echo "  ## ", c.lisprepr, " : ", c.gettype[1].lisprepr
-    #     echo "  -> ", c.gettype[1].sametype gTindexDummy.gettype
-    #     var s = newCall(c)
-    #     for i in 1..<n.len:
-    #       s.add n[i]
-    #     echo s.gettype.lisprepr
+    # echo "** dummy type check got: ", n.repr
     # echo "## dummy type check got type: ", t.repr
     result = t.sametype gTindexDummy.gettype
     # echo "isDummyType returns: ", result
@@ -376,7 +396,7 @@ const autoSumOps = ["+", "-", "*", "/"]
 proc getlhs(n: NimNode): NimNode =
   # echo "getlhs: ", n.treerepr
   if n.kind == nnkAsgn:
-    result = n[0]
+    result = if n[0].kind == nnkHiddenDeref: n[0][0] else: n[0]
   elif n.kind in CallNodes and $n[0] in autoSumFunctionNoBracket:
     result = n[1]
   elif n.kind in CallNodes and $n[0] == "[]=":
@@ -389,10 +409,35 @@ proc getlhsix(s: seq[dummyTree]): seqset[NimNode] =
   result.init
   for i in 0..<s.len-1: # Every but last belongs to the left hand side.
     result.incl s[i].idx
+proc isAutoSumStmt(n: NimNode): bool =
+  result = n.kind == nnkAsgn or (n.kind in CallNodes and $n[0] in autoSumFunctions)
 proc needAutoSum(n: NimNode, t: dummyTree): bool =
   let rhsLocalIx = t.idx - t.branch.getlhsix
-  result = n.kind == nnkAsgn or (n.kind in CallNodes and $n[0].symbol in autoSumFunctions) and
-    rhsLocalIx.len > 0
+  result = n.isAutoSumStmt and rhsLocalIx.len > 0
+
+proc rebindAssignment(n: NimNode): NimNode =
+  if n.kind == nnkAsgn:
+    result = newCall(bindsym"autoIndexAsgn", n[0], n[1])
+  else:
+    result = n
+macro reAssign(n: untyped): stmt =
+  dbgFlow "reAssign <= ", n
+  proc g(n: NimNode): NimNode =
+    if n.kind == nnkStmtList:
+      result = newStmtList()
+      for i in 0..<n.len:
+        result.add n[i].g
+    elif n.kind == nnkBlockStmt:
+      result = newBlockstmt(n[0], n[1].g)
+    elif n.kind in RoutineNodes:
+      result = n
+      result[6] = n[6].g
+    elif n.kind in {nnkTypeSection, nnkVarSection, nnkLetSection, nnkConstSection}:
+      result = n
+    else:
+      result = n.rebindAssignment
+  result = n.g
+  # dbgFlow "reAssign => ", result
 
 var dID {.compileTime.} = 0
 proc contractDummyU(n: NimNode): NimNode =
@@ -507,7 +552,7 @@ proc contractDummyU(n: NimNode): NimNode =
     # echo "==== g => ", result.repr
     # echo "---- p => ", previousDummy
   result = n
-  if n.kind == nnkAsgn or n.kind in CallNodes and $n[0] in autoSumFunctions:
+  if n.isAutoSumStmt:
     var rhsIxList = newseq[ix]()
     let rhs = rhsIxList.g n[^1]
     var lhsIxList = rhsIxList.getOpenIx.reversed # A list of ix that are not contracted at rhs.
@@ -572,24 +617,40 @@ proc dummyLoopGen(ix: seqset[NimNode], n: NimNode): NimNode =
     # if body.kind != nnkStmtList:
     #   body = newPar(body)
     result = newNimNode(nnkForStmt).add(id, ii, body)
+proc indexedTensor(m: NimNode): NimNode =
+  var n = m
+  if n.kind == nnkHiddenDeref: n = m[0]
+  if n.kind in CallNodes and $n[0] in ["[]", "[]="]:
+    result = n[1]
+  elif n.kind == nnkBracketExpr:
+    result = n[0]
+  else:                         # What if a HiddenAddr?
+    result = newEmptyNode()
 macro splitLhsDuplicate(n: typed): stmt =
+  dbgFlow "splitLhsDuplicate <= ", n
   # hint ">>>> splitLhsDuplicate <= " & n.treerepr
   # x[a,b] = y[b]
   #  -> x[a.head,b] = y[b]
   #     x[a.tail,b] = x[a.head,b]
+  # NOTE: Skip the last stmt in repeated applications of this macro!
   # echo ">>>> splitLhsduplicate: ", n.lisprepr
   # echo "     ", n.repr
   result = n                    # By default.
   let t = n.genDummyTree
-  if n.needAutoSum t:
+  dbgDetail "dummytree:\n" & t.treerepr
+  if n.isAutoSumStmt:
     let
       lhs = n.getlhs
+      lhsT = lhs.indexedTensor
+      rhsT = n[^1].indexedTensor
       lhsIx = t.branch.getlhsix
       rhsIx = t.branch[^1].idx
       lhsLocalIx = t.idx - rhsIx
     # echo "lhs:        ", lhs.lisprepr
     # echo "lhsLocalIx: ", lhsLocalIx.repr
-    if lhsLocalIx.len > 0:
+    dbgDetail "dummytree:lhsT: " & lhsT.lisprepr
+    dbgDetail "dummytree:rhsT: " & rhsT.lisprepr
+    if lhsLocalIx.len > 0 and not (lhsT != newEmptyNode() and lhsT == rhsT):
       var
         stmtHead = n
         constHead = newNimNode(nnkConstSection)
@@ -612,8 +673,10 @@ macro splitLhsDuplicate(n: typed): stmt =
       result = newStmtList().add(constHead, stmtHead)
       for c in lhsTail:
         result.add c.newAssignment stmtHead.getlhs
+  dbgDetail "splitLhsduplicate => ", result
   # hint "<<<< splitLhsDuplicate => " & result.treerepr
 macro splitRhsSum(n: typed): stmt =
+  dbgFlow "splitRhsSum <= ", n
   # echo "\n>>>> splitRhsSum <= ", n.repr
   # hint ">>>> splitRhsSum <= " & n.treerepr
   # x[a] = y[a] `op` z[a,b]
@@ -625,7 +688,7 @@ macro splitRhsSum(n: typed): stmt =
   let t = n.genDummyTree
   if n.needAutoSum t:
     let
-      fun = $n[0]
+      fun = if n.kind == nnkAsgn: "" else: $n[0]
       lhs = n.getlhs
       lhsIx = t.branch.getlhsix
       rhs = n[^1]
@@ -683,6 +746,7 @@ macro splitRhsSum(n: typed): stmt =
     result = n
   # hint "<<<< splitRhsSum => " & result.treerepr
 macro splitMultiOp(n: typed): stmt =
+  dbgFlow "splitMultiOp <= ", n
   # echo "\n>>>> splitMultiOp <= ", n.repr
   result = n
   # echo "<<<< splitMultiOp => ", result.repr
@@ -691,7 +755,7 @@ proc accumulateAutoSum(n: NimNode): NimNode =
   let t = n.genDummyTree
   if n.needAutoSum t:
     let
-      fun = $n[0]
+      fun = if n.kind == nnkAsgn: "" else: $n[0]
       lhs = n.getlhs
       rhs = n[^1]
       lhsIx = t.branch.getlhsix
@@ -772,6 +836,7 @@ macro splittingHelper(n: typed): stmt =
 template splitting(n: typed): stmt =
   fixpointcall(splittingHelper, n)
 macro autoSum(n: typed): stmt =
+  dbgFlow "autoSum <= ", n
   # hint ">>>> autoSum <= " & n.treerepr
   proc g(n: NimNode): NimNode =
     if n.kind == nnkStmtList:
@@ -799,6 +864,7 @@ proc loopDummy(n: NimNode): NimNode =
   # echo "---- t: ", t.treerepr
   result = rhsLocalIx.dummyLoopGen otherIx.dummyLoopGen n
 macro looping(n: typed): stmt =
+  dbgFlow "looping <= ", n
   # hint ">>>> looping: <= " & n.treerepr
   proc g(n: NimNode): NimNode =
     # echo "\n>>>> looping:g <= ", n.repr
@@ -826,6 +892,7 @@ macro looping(n: typed): stmt =
   result = n.g
   # hint "<<<< looping => " & result.treerepr
 macro fusionHelper(n: typed): stmt =
+  dbgFlow "fusion <= ", n
   # hint ">>>> fusion <= " & n.treerepr
   proc g(n: NimNode): NimNode =
     # echo "#### fusion:g <= ", n.repr
@@ -883,23 +950,29 @@ macro showCallResult(n: untyped): stmt =
       result = n.copyNimNode
       result.add n[0]
       result.add n[1].g
-      result = newCall(bindsym"show", newlit($n[0]), result)
+      result = newCall(bindsym"show", newlit($n[0] & " => "), result)
     elif n.kind == nnkStmtList and n.len == 1 and n[0].kind in CallNodes:
       result = n[0].g
     else:
       result = n
   result = n.g
-macro tensorOpsTrace*(verbose: static[TPLDebug], n: untyped): stmt =
-  template tensorOpsHelper(v: TPLDebug, n: untyped): stmt =
-    setDebug(TPLDebug.none, showCallResult fusion looping autoSum splitting convertDummyU setDebug(TPLDebug(v), n))
+  # dbg "showCallResult:", result
+macro tensorOps*(n: untyped): stmt =
+  template tensorOpsHelper(n: untyped): stmt =
+      showCallResult fusion looping autoSum splitting convertDummyU reAssign n
   if n.kind in RoutineNodes:
     result = n
-    result[6] = getast(tensorOpsHelper(verbose, n[6]))
+    result[6] = getast(tensorOpsHelper(n[6]))
   else:
-    result = getast(tensorOpsHelper(verbose, n))
-macro tensorOps*(n: untyped): stmt =
-  quote do:
-    tensorOpsTrace TPLDebug.none, `n`
+    result = getast(tensorOpsHelper(n))
+macro tensorOpsTrace*(verbose: static[TPLDebug], n: untyped): stmt =
+  template tensorOpsTraceHelper(v: TPLDebug, n: untyped): stmt =
+    const OldLvl = TPLDebugLevel
+    static: TPLDebugLevel = TPLDebug(v)
+    n
+    static: TPLDebugLevel = OldLvl
+  result = getast tensorOpsTraceHelper(verbose, getast(tensorOps n))
+  # dbg "tensorOpsTrace:", result
 
 proc `$`*[D,V;id1,lo1,hi1:static[int]](v: gT1[D,V,id1,lo1,hi1]): string {.tensorOps.} =
   var i: Dummy(IndexType(v, 1))
