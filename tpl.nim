@@ -2,6 +2,7 @@ import macros
 import seqset
 import utils
 import tensor_data_default
+import strutils
 
 type
   TPLDebug* {.pure.} = enum
@@ -237,7 +238,19 @@ template `[]=`*[D,V;id1,lo1,hi1,id2,lo2,hi2:static[int]](x: gT2[D,V,id1,lo1,hi1,
 template `[]=`*[D,V;id1,lo1,hi1,id2,lo2,hi2:static[int]](x: gT2[D,V,id1,lo1,hi1,id2,lo2,hi2], i2: gTindex[id2,lo2,hi2], y: V): expr =
   `[]=`(x, UniversalDummyIndex, i2, y)
 
-template genBinOp(op: untyped): stmt =
+template genUnaryOp(op: untyped): stmt =
+  template op*[D,V;id1,lo1,hi1:static[int]](x: gT1[D,V,id1,lo1,hi1]): expr =
+    op(x[UniversalDummyIndex])
+  template op*[D,V;id1,lo1,hi1,id2,lo2,hi2:static[int]](x: gT2[D,V,id1,lo1,hi1,id2,lo2,hi2]): expr =
+    op(x[UniversalDummyIndex, UniversalDummyIndex])
+
+macro genUOp(os: varargs[untyped]): stmt =
+  result = newStmtList()
+  for o in os:
+    result.add newCall(bindsym"genUnaryOp", o)
+genUOp(`+`, `-`)
+
+template genBinaryOp(op: untyped): stmt =
   template op*[lD,lV;lid1,llo1,lhi1:static[int]](x: gT1[lD,lV,lid1,llo1,lhi1], y: lV): expr =
     op(x[UniversalDummyIndex], y)
   template op*[rD,rV;rid1,rlo1,rhi1:static[int]](x: rV, y: gT1[rD,rV,rid1,rlo1,rhi1]): expr =
@@ -255,11 +268,11 @@ template genBinOp(op: untyped): stmt =
   template op*[lD,lV,rD,rV;lid1,llo1,lhi1,lid2,llo2,lhi2,rid1,rlo1,rhi1,rid2,rlo2,rhi2:static[int]](x: gT2[lD,lV,lid1,llo1,lhi1,lid2,llo2,lhi2], y: gT2[rD,rV,rid1,rlo1,rhi1,rid2,rlo2,rhi2]): expr =
     op(x[UniversalDummyIndex,UniversalDummyIndex], y[UniversalDummyIndex,UniversalDummyIndex])
 
-macro genOp(os: varargs[untyped]): stmt =
+macro genBOp(os: varargs[untyped]): stmt =
   result = newStmtList()
   for o in os:
-    result.add newCall(bindsym"genBinOp", o)
-genOp(`+`, `-`, `*`, `/`, `+=`, `-=`, `*=`, `/=`)
+    result.add newCall(bindsym"genBinaryOp", o)
+genBOp(`+`, `-`, `*`, `/`, `+=`, `-=`, `*=`, `/=`)
 
 template autoIndexAsgn[lD,lV;lid1,llo1,lhi1:static[int]](x: gT1[lD,lV,lid1,llo1,lhi1], y: lV): expr =
   x[UniversalDummyIndex] = y
@@ -294,6 +307,21 @@ macro autoIndexAsgn[T](lhs: T, rhs: T): stmt =
 
 ####################
 # tensor ops
+macro temporaryTensorEq(lhs: untyped, rhs: typed): stmt =
+  dbgDetail "temporaryTensorEq:lhs: ", lhs
+  dbgDetail "temporaryTensorEq:rhs: ", rhs
+  result = newStmtList().add(newNimNode(nnkVarSection), newAssignment(lhs, rhs))
+  let rhsT = newCall(bindsym"type", rhs)
+  if lhs.kind == nnkBracketExpr and lhs.len > 0:
+    var tensorCall = newCall(bindsym"Tensor", rhsT, newNimNode(nnkBracket))
+    for i in 1..<lhs.len:
+      tensorCall[2].add newCall(bindsym"type", lhs[i])
+    result[0].add newIdentDefs(lhs[0], tensorCall)
+  elif lhs.kind == nnkIdent:
+    result[0].add newIdentDefs(lhs, rhsT)
+  else:
+    error "Don't know how to create temporaryTensor from lhs: '" & lhs.repr & "' and rhs: '" & rhs.repr & "'"
+
 macro staticforbody(i: untyped, j: int, t: untyped, n: untyped): untyped =
   # echo "\n>>>> staticfor"
   let
@@ -397,7 +425,7 @@ proc getlhs(n: NimNode): NimNode =
   # echo "getlhs: ", n.treerepr
   if n.kind == nnkAsgn:
     result = if n[0].kind == nnkHiddenDeref: n[0][0] else: n[0]
-  elif n.kind in CallNodes and $n[0] in autoSumFunctionNoBracket:
+  elif n.kind in CallNodes and $n[0] in autoSumFunctionNoBracket and n.len == 3:
     result = n[1]
   elif n.kind in CallNodes and $n[0] == "[]=":
     result = newNimNode(nnkBracketExpr)
@@ -414,6 +442,18 @@ proc isAutoSumStmt(n: NimNode): bool =
 proc needAutoSum(n: NimNode, t: dummyTree): bool =
   let rhsLocalIx = t.idx - t.branch.getlhsix
   result = n.isAutoSumStmt and rhsLocalIx.len > 0
+proc reAssembleBinOp(n, lhs, rhs: NimNode): NimNode =
+  if n.kind == nnkAsgn or
+     (n.kind in CallNodes and $n[0] == "[]=" and lhs.kind == nnkBracketExpr):
+    result = newAssignment(lhs, rhs)
+  elif n.kind in CallNodes and n.len == 3:
+    result = n.copyNimNode.add(n[0])
+    for s in [lhs, rhs]:
+      if s.kind == nnkPar: result.add s
+      else: result.add s.newPar
+  else:
+    error "Don't know how to reassemble binary op for\n" &
+      n.repr & "\nfrom lhs\n" & lhs.repr & "\nand rhs\n" & rhs.repr
 
 proc rebindAssignment(n: NimNode): NimNode =
   if n.kind == nnkAsgn:
@@ -439,143 +479,386 @@ macro reAssign(n: untyped): stmt =
   result = n.g
   # dbgFlow "reAssign => ", result
 
-var dID {.compileTime.} = 0
-proc contractDummyU(n: NimNode): NimNode =
-  # echo "\n>>>>  <= ", n.treerepr
-  type
-    ix = tuple
-      sym: NimNode
-      typ: NimNode
-      con: bool
-      outsider: bool
-    ixlist = seq[ix]
-  proc getOpenIx(n: ixlist): ixlist =
-    result = newseq[ix]()
-    for c in n:
-      if not c.con:      # not contracted
-        result.add c
-  proc reversed(n: ixlist): ixlist =
-    result = newseq[ix](n.len)
-    for i in 0..<n.len:
-      result[i] = n[n.len-1-i]
-  proc pairContract(n: var ixlist): NimNode =
-    result = newPar()
-    for i, p in n:
-      if p.con:                 # Skip contracted ones.
-        continue
-      for j in countdown(n.high, i+1):
-        if n[j].con:            # Skip contracted ones.
-          continue
-        if p.typ == n[j].typ:   # same type
-          result.add newPar(p.sym, n[j].sym)
-          n[j].con = true
-          break
-  proc filterMissing(p: NimNode, n: ixlist): NimNode =
-    # Receives and returns Par(Par(earlierSym, laterSym), ...)
-    # Return pairs whose left one (earlierSym) is in n.
-    result = newPar()
-    for s in p:
-      for i in n:
-        if s[0] == i.sym:
-          result.add s
-          break          # Assumes each symbol only appears once.
-  proc removeLeft(n: var ixlist, p: NimNode) =
-    for s in p:
-      for i in 0..<n.len:
-        if s[0] == n[i].sym:
-          n.del i
-          break          # Assumes each symbol only appears once.
-  proc uniqueIx(xs: varargs[ixlist]): ixlist =
-    # echo "\n>>>> uniqueIx <="
-    result = newseq[ix]()
-    for x in xs:
-      # echo "---- x ", x
-      for i in x:
-        var match = false
-        for j in result:
-          if i.sym == j.sym:
-            match = true
-            break
-        if not match:
-          result.add i
-    # echo "<<<< uniqueIx => ", result
-  proc replaceIx(n: NimNode, pair: NimNode): NimNode =
-    result = n
-    for p in pair:
-      result = result.replace(p[0], p[1])
-  proc g(previousDummy: var ixlist, n: NimNode): NimNode =
-    if n.kind == nnkHiddenCallConv and
-         $n.gettype == "gTindex" and
-         $n[0].symbol.getimpl[3][1][1] == "gTindexDummyU": # sameType doesn't work.
-      let t = n[0].symbol.getimpl[3][0] # The symbol of the return type of the converter.
-      var i = previousDummy.len-1
-      while i >= 0:
-        if previousDummy[i].typ == t: # First same type ix from tail.
-          break                 # Stop at the first same type always.
-        dec i
-      if i < 0 or not previousDummy[i].outsider:
-        let d = gensym(nskVar, "__D" & $dID & "__" & $t)
-        inc dID
-        previousDummy.add((sym: d, typ: t, con: false, outsider: false))
-        result = d
-      else:         # Only contract with index from other tensor.
-        previousDummy[i].con = true
-        previousDummy[i].outsider = false
-        result = previousDummy[i].sym
-    else:
-      if n.kind in CallNodes and $n[0] in ["[]", "[]="]:
-        for i in 0..<previousDummy.len:
-          # echo "set true"
-          previousDummy[i].outsider = true
-      result = n.safeCopyNimNode
-      for i in n:
-        result.add previousDummy.g i
-      if result.kind in CallNodes:
-        if $result[0] == "[]":
-          var nbr = newNimNode(nnkBracketExpr)
-          for i in 1..<result.len:
-            nbr.add result[i]
-          result = nbr
-        # else:
-        #   result[0] = ident($result[0]) # Force compiler to check the type again???
-        # for i in 1..<result.len:
-        #   if result[i].kind != nnkPar:
-        #     result[i] = newPar(result[i])
-        if result.kind != nnkPar:
-          result = result.newPar
-      elif result.kind == nnkHiddenDeref:
-        result = result[0].newPar
-      # elif result.kind in {nnkHiddenDeref, nnkHiddenAddr}:
-      #   result = result[0].newPar
-      # else:
-      #   discard
-    # echo "==== g => ", result.repr
-    # echo "---- p => ", previousDummy
-  result = n
-  if n.isAutoSumStmt:
-    var rhsIxList = newseq[ix]()
-    let rhs = rhsIxList.g n[^1]
-    var lhsIxList = rhsIxList.getOpenIx.reversed # A list of ix that are not contracted at rhs.
-    for i in 0..<lhsIxList.len:
-      lhsIxList[i].outsider = true
+type
+  Ixk = enum
+    ixk0, ixkI, ixkE, ixkM, ixkT, ixkN
+  ixtree = ref object
+    case kind: Ixk
+    of ixkI:
+      vId, vIt: NimNode # dummy and its type
+      con: bool         # if contracted
+    of ixkE: vEl, vEr: ixtree  # lhs and rhs
+    of ixkM: vM: seq[ixtree]   # operands of `*`
+    of ixkT: vT: seq[ixtree]   # indexing of a tensor
+    of ixkN: vN: seq[ixtree]   # Other NimNode
+    of ixk0: discard           # Empty
+proc treerepr(t: ixtree): string =
+  case t.kind
+  of ixk0:
+    result = "--"
+  of ixkI:
+    result = "Ix " & t.vId.repr & ": " & t.vIt.repr & ", con: " & $t.con
+  of ixkE:
     let
-      lhs = lhsIxList.g n.getlhs # Uncontracted would left open after this.
-      # pairContract: Extract those uncontracted pairs (earlier & later).
-      # filterMissing: remove (earlier) ones that are not in rhsIxList away from the pairs.
-      # So we never contract within lhs.
-      pairContractRhsIx = lhsIxList.pairContract.filterMissing rhsIxList
-    var requiredIx = uniqueIx(lhsIxList, rhsIxList)
-    requiredIx.removeLeft pairContractRhsIx
-    if requiredIx.len > 0:
-      var ixDecl = newNimNode(nnkVarSection)
-      for i in requiredIx:
-        ixDecl.add newIdentDefs(i[0], newCall(bindsym"Dummy", ident($i[1])))
-      if n.kind == nnkAsgn or $n[0] in ["=", "[]="]:
-        result = newAssignment(lhs, rhs.replaceIx pairContractRhsIx)
+      lhs = t.vEl.treerepr.indent(2)
+      rhs = t.vEr.treerepr.indent(2)
+    result = "Eq\n" & lhs & "\n" & rhs
+  of ixkM:
+    result = "Mu"
+    for c in t.vM:
+      result &= "\n" & c.treerepr.indent(2)
+  of ixkT:
+    result = "Ti"
+    for c in t.vT:
+      result &= "\n" & c.treerepr.indent(2)
+  of ixkN:
+    result = "Nn"
+    for c in t.vN:
+      result &= "\n" & c.treerepr.indent(2)
+proc `$`(t: ixtree): string = treerepr t
+proc `$`(t: ptr ixtree): string = t.repr
+proc contractDummyU(n: NimNode): NimNode =
+  var dID {.compileTime global.} = 0
+  template notEmpty(t: ixtree): bool = not t.empty
+  proc empty(t: ixtree): bool =
+    case t.kind
+    of ixk0: result = true
+    of ixkI: result = t.vId == nil
+    of ixkE: result = t.vEl.empty and t.vEr.empty
+    of ixkM: result = t.vM.len == 0
+    of ixkT: result = t.vT.len == 0
+    of ixkN: result = t.vN.len == 0
+  proc add(t: var ixtree, i: ixtree) =
+    if i.notempty:
+      case t.kind
+      of ixkM:
+        t.vM.add i
+      of ixkT:
+        if i.kind == ixkT:
+          for j in i.vT:
+            t.vT.add j
+        else:
+          t.vT.add i
+      of ixkN:
+        t.vN.add i
       else:
-        result = infix(lhs, $n[0], rhs.replaceIx pairContractRhsIx)
-      result = newStmtList().add(ixDecl, result)
-  # echo "<<<< contractDummyU => ", result.treerepr
+        error "Internal error: cannot add to ixtree\n" & t.repr & "\nwith\n" & i.repr
+  proc markContracted(t: var ixtree, s: NimNode) =
+    case t.kind
+    of ixkI:
+      if t.vId == s:
+        t.con = true
+    of ixkE:
+      t.vEl.markContracted s
+      t.vEr.markContracted s
+    of ixkM:
+      for i in 0..<t.vM.len:
+        t.vM[i].markContracted s
+    of ixkN:
+      for i in 0..<t.vN.len:
+        t.vN[i].markContracted s
+    of ixkT:
+      for i in 0..<t.vT.len:
+        t.vT[i].markContracted s
+    of ixk0:
+      discard
+  proc replaceDummyU(n: NimNode): (NimNode, ixtree) =
+    if n.kind == nnkHiddenCallConv and n[1] == bindsym"UniversalDummyindex":
+      let
+        t = n[0].symbol.getimpl[3][0] # The symbol of the return type of the converter.
+        d = gensym(nskVar, "__D" & $dID & "__" & $t)
+      inc dID
+      result = (d, ixtree(kind: ixkI, vId: d, vIt: t))
+    elif n.isAutoSumStmt:
+      let
+        (lhs, lt) = n.getlhs.replaceDummyU
+        (rhs, rt) = n[^1].replaceDummyU
+      result = (
+        n.reAssembleBinOp(lhs, rhs),
+        ixtree(kind: ixkE, vEl: lt, vEr: rt)
+      )
+    else:
+      var
+        nn = n.copyNimNode
+        ixt =
+          if n.kind in CallNodes and $n[0] == "*":
+            ixtree(kind: ixkM, vM: @[])
+          elif n.kind == nnkBracketExpr or (n.kind in CallNodes and $n[0] == "[]"):
+            ixtree(kind: ixkT, vT: @[])
+          else:
+            ixtree(kind: ixkN, vN: @[])
+      for c in n:
+        let (r, t) = c.replaceDummyU
+        nn.add r
+        ixt.add t
+      if ixt.empty:
+        result = (n, ixtree(kind: ixk0))
+      else:
+        # Special rebindings here to force type check the stmt again.
+        if nn.kind in CallNodes:
+          if $nn[0] == "[]":
+            nn[0] = bindsym"[]" # We need to index with different index types.
+          # We may or may not need the following 5 lines.
+          # for i in 1..<nn.len:
+          #   if nn[i].kind == nnkHiddenDeref:
+          #     nn[i] = nn[i][0].newPar
+          #   elif nn[i].kind != nnkPar:
+          #     nn[i] = nn[i].newPar
+          nn = nn.newPar
+        elif nn.kind == nnkHiddenDeref:
+          nn = if nn[0].kind == nnkPar: nn[0] else: nn[0].newPar
+        result = (nn, ixt)
+  proc alltypes(t: ixtree): seqset[NimNode] =
+    result.init
+    case t.kind
+    of ixkI:
+      result.incl t.vIt
+    of ixkE:
+      result.incl t.vEl.alltypes
+      result.incl t.vEr.alltypes
+    of ixkM:
+      for s in t.vM:
+        result.incl s.alltypes
+    of ixkT:
+      for s in t.vT:
+        result.incl s.alltypes
+    of ixkN:
+      for s in t.vN:
+        result.incl s.alltypes
+    of ixk0:
+      discard
+  proc collectDummy(t: ixtree): seq[ixtree] =
+    # Collect all ixkI kinds.
+    result.newseq(0)
+    case t.kind
+    of ixkI:
+      result.add t
+    of ixkE:
+      result.add t.vEl.collectDummy
+      result.add t.vEr.collectDummy
+    of ixkM:
+      for s in t.vM:
+        result.add s.collectDummy
+    of ixkT:
+      for s in t.vT:
+        result.add s.collectDummy
+    of ixkN:
+      for s in t.vN:
+        result.add s.collectDummy
+    of ixk0:
+      discard
+  type
+    rpair = tuple
+      fr: NimNode
+      to: NimNode
+    replacePairs = object
+      data: seq[rpair]
+  iterator items(s: replacePairs): rpair =
+    var i = 0
+    while i < s.data.len:
+      yield s.data[i]
+      inc i
+  proc init(x: var replacePairs) =
+    x.data.newseq(0)
+  proc len(x: replacePairs): int =
+    x.data.len
+  proc add(x: var replacePairs, p: rpair) =
+    var
+      p = p
+      changed = false
+    for i in 0..<x.data.len:
+      if x.data[i].fr == p.fr:
+        x.data[i].to = p.to
+        changed = true
+      if x.data[i].to == p.fr:
+        x.data[i].to = p.to
+      if x.data[i].fr == p.to:
+        p.to = x.data[i].to
+    if not changed:
+      x.data.add p
+  proc add(x: var replacePairs, ps: replacePairs) =
+    for p in ps.data:
+      x.add p
+  proc replace(n: NimNode, p: rpair): NimNode =
+    n.replace(p.fr, p.to)
+  proc rmReplaced(xs: seq[ixtree], ps: replacePairs): seq[ixtree] =
+    result.newseq(xs.len)
+    var j = 0
+    for x in xs:
+      assert x.kind == ixkI
+      var toBeReplaced = false
+      for p in ps:
+        if x.vId == p.fr:
+          toBeReplaced = true
+          break
+      if not toBeReplaced:
+        result[j] = x
+        inc j
+    result.setlen j
+  proc noncontractedIx(t: ixtree, s: NimNode): seq[NimNode] =
+    result = @[]
+    case t.kind
+    of ixkI:
+      if t.vIt == s and not t.con:
+        result.add t.vId
+    of ixkE:
+      result.add t.vEl.noncontractedIx s
+      result.add t.vEr.noncontractedIx s
+    of ixkM:
+      for c in t.vM:
+        result.add c.noncontractedIx s
+    of ixkT:
+      for c in t.vT:
+        result.add c.noncontractedIx s
+    of ixkN:
+      for c in t.vN:
+        result.add c.noncontractedIx s
+    of ixk0:
+      discard
+  proc matchDummyType(t: var ixtree, s: NimNode): replacePairs # Used in following recursions.
+  proc contractMul(t: var ixtree, s: NimNode): replacePairs =
+    # We contract nearby indices of tensors multiplied together.
+    # hint "contractMul:t: " & t.treerepr
+    # hint "contractMul:s: " & $s
+    result.init
+    case t.kind:
+    of ixkM:
+      var ixlist = newseq[seq[NimNode]](t.vM.len)
+      for i in 0..<t.vM.len:
+        result.add t.vM[i].contractMul s
+        ixlist[i] = t.vM[i].noncontractedIx s
+      for i in 1..<ixlist.len:
+        if ixlist[i].len > 0:
+          for prevI in countdown(i-1, 0):
+            if ixlist[prevI].len > 0:
+              result.add((ixlist[i][0], ixlist[prevI][^1]))
+              t.vM[i].markContracted ixlist[i][0]
+              ixlist[i].del 0
+              t.vM[prevI].markContracted ixlist[prevI][^1]
+              ixlist[prevI].del(ixlist[prevI].len-1)
+              break
+    of ixkT:
+      for i in 0..<t.vT.len:
+        result.add t.vT[i].contractMul s
+    of ixkN:
+      for i in 0..<t.vN.len:
+        result.add t.vN[i].contractMul s
+    else:
+      result.init
+    # hint "contractMul:t: " & t.treerepr
+    # hint "contractMul:result: " & $result
+  proc match2(s: NimNode, lhs, rhs: var ixtree): (replacePairs, seq[NimNode], seq[NimNode]) =
+    # Try to match lhs with rhs, returns replacement pairs and
+    # non-contracted indices from lhs and rhs.
+    # hint "match2: " & s.repr
+    # hint "match2: " & lhs.treerepr
+    # hint "match2: " & rhs.treerepr
+    var
+      lp = lhs.matchDummyType s
+      rp = rhs.matchDummyType s
+      lix = lhs.noncontractedIx s
+      rix = rhs.noncontractedIx s
+    # hint "match2:lp: " & $lp
+    # hint "match2:rp: " & $rp
+    # hint "match2:lix: " & $lix
+    # hint "match2:rix: " & $rix
+    while lix.len != rix.len:
+      if lix.len > rix.len:
+        let p = lhs.contractMul s
+        lix = lhs.noncontractedIx s
+        if p.len == 0:
+          break
+        lp.add p
+      else:
+        let p = rhs.contractMul s
+        rix = rhs.noncontractedIx s
+        if p.len == 0:
+          break
+        rp.add p
+    lp.add rp
+    if lix.len == rix.len:
+      for i in 0..<lix.len:
+        lp.add((rix[i], lix[i]))
+      result = (lp, lix, rix)
+    else:
+      result = (lp, lix, rix)
+  proc matchDummyType(t: var ixtree, s: NimNode): replacePairs =
+    # Make sure that indices of type `s` are matched.
+    # hint "matchDummyType: " & s.repr
+    case t.kind
+    of ixkE:
+      let (rp, lix, rix) = s.match2(t.vEl, t.vEr)
+      # hint "matchDummyType:lix " & lix.repr
+      # hint "matchDummyType:rix " & rix.repr
+      # hint "matchDummyType:rp " & rp.repr
+      result = rp
+      if lix.len != rix.len:
+        if lix.len <= 1 or rix.len <= 1: # Special Assignment Rule!
+          let ix = if lix.len > 0: lix[0] else: rix[0]
+          for c in lix:
+            if c != ix:
+              result.add((c, ix))
+          for c in rix:
+            if c != ix:
+              result.add((c, ix))
+        else:
+          error "Cannot match dummy indices for type: " & s.repr
+    of ixkN:
+      result.init
+      let n = t.vn.len - 1
+      var
+        changed = false
+        unmatched = true
+        idlen = newseq[int](n)
+      while changed and unmatched:
+        for i in 0..<n:
+          let
+            olen = idlen[i]
+            (rp, lix, rix) = s.match2(t.vN[i], t.vN[i+1])
+          if lix.len != rix.len:
+            error "Cannot match dummy indices for type: " & s.repr
+          idlen[i] = lix.len
+          if olen != idlen[i]:
+            changed = true
+          result.add rp
+        for i in 0..<n-1:
+          if idlen[i] != idlen[i+1]:
+            unmatched = true
+            break
+    of ixkM:
+      result.init
+      for i in 0..<t.vM.len:
+        result.add t.vM[i].matchDummyType s
+    of ixkT:
+      result.init
+      for i in 0..<t.vT.len:
+        result.add t.vT[i].matchDummyType s
+    of ixkI:
+      result.init
+    of ixk0:
+      result.init
+  proc matchDummy(t: var ixtree): replacePairs =
+    result.init
+    for s in t.alltypes:
+      result.add t.matchDummyType s
+  # Stitch the functions together.
+  var ixt: ixtree
+  (result, ixt) = n.replaceDummyU
+  if ixt.notempty:
+    # hint "contractDummyU:n: " & n.repr
+    # hint "contractDummyU:result: " & result.treerepr
+    # hint "contractDummyU:ixt: " & ixt.treerepr
+    let reps = ixt.matchDummy
+    for s in reps:
+      result = result.replace s
+    let ix = ixt.collectDummy.rmReplaced reps
+    result = newStmtList().add(
+      newNimNode(nnkVarSection),
+      result
+    )
+    for i in ix:
+      assert i.kind == ixkI
+      result[0].add newIdentDefs(i.vId, newCall(bindsym"Dummy", ident($i.vIt)))
 macro convertDummyU(n: typed): stmt =
   dbgFlow "convertDummyU <= ", n
   proc g(n: NimNode): NimNode =
@@ -593,7 +876,7 @@ macro convertDummyU(n: typed): stmt =
     else:
       result = n.contractDummyU
   result = n.g
-  # dbgFlow "convertDummyU => ", result
+  dbgFlow "convertDummyU => ", result
 
 proc dummyLoopGen(ix: seqset[NimNode], n: NimNode): NimNode =
   proc reCall(n: NimNode): NimNode =
@@ -626,6 +909,7 @@ proc indexedTensor(m: NimNode): NimNode =
     result = n[0]
   else:                         # What if a HiddenAddr?
     result = newEmptyNode()
+var temporaryTensorId {.compileTime.} = 0
 macro splitLhsDuplicate(n: typed): stmt =
   dbgFlow "splitLhsDuplicate <= ", n
   # hint ">>>> splitLhsDuplicate <= " & n.treerepr
@@ -641,38 +925,48 @@ macro splitLhsDuplicate(n: typed): stmt =
   if n.isAutoSumStmt:
     let
       lhs = n.getlhs
+      rhs = n[^1]
       lhsT = lhs.indexedTensor
-      rhsT = n[^1].indexedTensor
+      rhsT = rhs.indexedTensor
       lhsIx = t.branch.getlhsix
       rhsIx = t.branch[^1].idx
       lhsLocalIx = t.idx - rhsIx
+      commonIx = lhsIx - lhsLocalIx
     # echo "lhs:        ", lhs.lisprepr
     # echo "lhsLocalIx: ", lhsLocalIx.repr
     dbgDetail "dummytree:lhsT: " & lhsT.lisprepr
     dbgDetail "dummytree:rhsT: " & rhsT.lisprepr
-    if lhsLocalIx.len > 0 and not (lhsT != newEmptyNode() and lhsT == rhsT):
-      var
-        stmtHead = n
-        constHead = newNimNode(nnkConstSection)
-        lhsTail = newseq[NimNode](lhsLocalIx.len)
-      for m in 0..<lhsTail.len:
-        lhsTail[m] = lhs
-      for n, i in lhsLocalIx:
-        let
-          iheadCall = newCall(bindsym"head", i)
-          ihead = gensym(nskConst, "__C__" & i.dummyStr)
-          itail = newCall(bindsym"tail", i)
-        constHead.add(newNimNode(nnkConstDef).add(ihead, newEmptyNode(), iheadCall))
-        stmtHead = stmtHead.convert(i, ihead)
+    if lhsLocalIx.len > 0 and rhsT == newEmptyNode(): # RHS is not a simple tensor.
+      if n.kind == nnkAsgn or (n.kind in CallNodes and $n[0] == "[]="):
+        var
+          stmtHead = n
+          constHead = newNimNode(nnkConstSection)
+          lhsTail = newseq[NimNode](lhsLocalIx.len)
         for m in 0..<lhsTail.len:
-          if m < n:
-            lhsTail[m] = lhsTail[m].convert(i, ihead)
-          elif m == n:
-            lhsTail[m] = lhsTail[m].convert(i, itail)
-          # Else, for m > n, do nothing.
-      result = newStmtList().add(constHead, stmtHead)
-      for c in lhsTail:
-        result.add c.newAssignment stmtHead.getlhs
+          lhsTail[m] = lhs
+        for n, i in lhsLocalIx:
+          let
+            iheadCall = newCall(bindsym"head", i)
+            ihead = gensym(nskConst, "__C__" & i.dummyStr)
+            itail = newCall(bindsym"tail", i)
+          constHead.add(newNimNode(nnkConstDef).add(ihead, newEmptyNode(), iheadCall))
+          stmtHead = stmtHead.convert(i, ihead)
+          for m in 0..<lhsTail.len:
+            if m < n:
+              lhsTail[m] = lhsTail[m].convert(i, ihead)
+            elif m == n:
+              lhsTail[m] = lhsTail[m].convert(i, itail)
+            # Else, for m > n, do nothing.
+        result = newStmtList().add(constHead, stmtHead)
+        for c in lhsTail:
+          result.add c.newAssignment stmtHead.getlhs
+      else:
+        var tt = newNimNode(nnkBracketExpr).add ident("__T" & $temporaryTensorId)
+        inc temporaryTensorId
+        for i in commonIx:
+          tt.add i
+        result = newStmtList().add(newCall(bindsym"temporaryTensorEq", tt, rhs))
+        result.add n.reAssembleBinOp(lhs, tt)
   dbgDetail "splitLhsduplicate => ", result
   # hint "<<<< splitLhsDuplicate => " & result.treerepr
 macro splitRhsSum(n: typed): stmt =
@@ -733,9 +1027,9 @@ macro splitRhsSum(n: typed): stmt =
           lopLocalIx = rhsLocalIx - ropIx
           ropLocalIx = rhsLocalIx - lopIx
         if lopLocalIx.len > 0:  # Hit ROP in the next round of recursion.
-          error "not implemented for lopLocalIx.len > 0"
+          error "not implemented for lopLocalIx.len > 0.  Received: " & n.repr
         elif ropLocalIx.len > 0: # Similar to lopLocalIx.len > 0, but we honor order for "*" and "/".
-          error "not implemented for ropLocalIx.len > 0"
+          error "not implemented for ropLocalIx.len > 0.  Received: " & n.repr
         else:                   # No local index for both operands
           result = n
       else:
@@ -891,6 +1185,7 @@ macro looping(n: typed): stmt =
     # echo "<<<< looping:g => ", result.repr
   result = n.g
   # hint "<<<< looping => " & result.treerepr
+  dbgDetail "looping => ", result
 macro fusionHelper(n: typed): stmt =
   dbgFlow "fusion <= ", n
   # hint ">>>> fusion <= " & n.treerepr
@@ -911,7 +1206,24 @@ macro fusionHelper(n: typed): stmt =
           var sndBody = snd[^1].copy
           for j in 0..<snd.len-2: # All loop variables.
             sndBody = sndBody.replace(snd[j], fst[j])
-          forstmt.add newStmtList().add(fst[^1], sndBody)
+          var forBody = newStmtList()
+          if fst[^1].kind == nnkStmtList:
+            for c in fst[^1]:
+              forBody.add c.copy # Require this copy to avoid illegal storage access.
+          else:
+            forBody.add fst[^1]
+          if sndBody.kind == nnkStmtList:
+            for c in sndBody:
+              forBody.add c.copy # Require this copy to avoid illegal storage access.
+          else:
+            forBody.add sndBody
+          for j in 0..<forBody.len: # Still need to make it recheck types.
+            if forBody[j].kind in CallNodes and forBody[j][0].kind == nnkSym:
+              forBody[j][0] = ident($forBody[j][0])
+              for k in 1..<forBody[j].len:
+                if forBody[j][k].kind != nnkPar:
+                  forBody[j][k] = forBody[j][k].newPar
+          forstmt.add forBody
           result.add forstmt
           inc i, 2
         else:
@@ -939,6 +1251,7 @@ macro fusionHelper(n: typed): stmt =
     # echo "<<<< fusion:g => ", result.repr
   result = n.g
   # hint "<<<< fusion => " & result.treerepr
+  dbgDetail "fusion => ", result
 template fusion(n: typed): stmt =
   fixpointcall(fusionHelper, n)
 macro show(s: string, n: typed): stmt =

@@ -4,10 +4,6 @@ import strutils
 iterator pairs*(n: NimNode): (int, NimNode) =
   for i in 0..<n.len:
     yield(i, n[i])
-proc safeCopyNimNode*(n: NimNode): NimNode =
-  # We just copy it and delete its children.  Workaround a bug in copyNimNode.
-  result = n.copy
-  result.del(0, n.len)
 proc replace*(n: NimNode, i: NimNode, j: NimNode): NimNode =
   # echo "\n>>>> replace"
   # echo n.lisprepr
@@ -28,10 +24,6 @@ proc convert*(n: NimNode, i: NimNode, j: NimNode): NimNode =
   # echo j.treerepr
   proc go(n: NimNode, i: NimNode, j: NimNode): tuple[rep: bool, nn: NimNode] =
     # echo "  ==== go : ", n.lisprepr
-    # if n.kind == nnkCall and i.kind == nnkCall and $i[0] == "tail":
-      # echo "XXXX n: ", n.treerepr
-      # echo "XXXX i: ", i.treerepr
-      # echo "XXXX n == i: ", n == i
     if n == i:
       # echo "  ---- n == i"
       result = (true, j)
@@ -39,7 +31,7 @@ proc convert*(n: NimNode, i: NimNode, j: NimNode): NimNode =
       # echo "A"
       result.rep = false
       # echo "* n: ", n.lisprepr
-      result.nn = n.safeCopyNimNode
+      result.nn = n.copyNimNode
       # echo "THE node: ", result.nn.lisprepr
       # result.nn = n.copyNimNode # FIXME: we may not need the changes later if we stop using copyNimNode.
       # echo "THE node: ", result.nn.lisprepr
