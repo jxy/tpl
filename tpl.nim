@@ -6,22 +6,23 @@ import strutils
 
 type
   TPLDebug* {.pure.} = enum
-    none, output, flow, detail
+    none, effect, output, flow, detail
+proc `$`(t: TPLDebug): string =
+  case t
+  of TPLDebug.none: "NONE"
+  of TPLDebug.effect: "EFFECT"
+  of TPLDebug.output: "OUTPUT"
+  of TPLDebug.flow: "FLOW"
+  of TPLDebug.detail: "DETAIL"
 var
-  TPLDebugLevel {.compileTime.} = TPLDebug.none
-proc dbg(s: string = "", n: NimNode = newEmptyNode(), lvl: TPLDebug = TPLDebug.none) =
+  TPLDebugLevel {.compileTime.} = TPLDebug.effect
+proc dbg(s: string = "", n: NimNode = newEmptyNode(), lvl: TPLDebug = TPLDebug.effect) =
   if TPLDebugLevel >= lvl:
     let ns = if TPLDebugLevel >= TPLDebug.detail: n.treerepr else: n.repr
     if n == newEmptyNode():
-      echo "DBG:", s
+      echo "DBG:", lvl, ":", s
     else:
-      echo "DBG:", s, ns
-proc dbgOutput(s: string, n: NimNode = newEmptyNode()) =
-  dbg("OUT:"&s, n, TPLDebug.output)
-proc dbgFlow(s: string, n: NimNode = newEmptyNode()) =
-  dbg("FLOW:"&s, n, TPLDebug.flow)
-proc dbgDetail(s: string, n: NimNode = newEmptyNode()) =
-  dbg("DETAIL:"&s, n, TPLDebug.detail)
+      echo "DBG:", lvl, ":", s, ns
 
 ####################
 # index type
@@ -291,8 +292,8 @@ template autoIndexAsgn[lD,lV,rD,rV;lid1,llo1,lhi1,rid1,rlo1,rhi1,rid2,rlo2,rhi2:
 template autoIndexAsgn[lD,lV,rD,rV;lid1,llo1,lhi1,lid2,llo2,lhi2,rid1,rlo1,rhi1,rid2,rlo2,rhi2:static[int]](x: gT2[lD,lV,lid1,llo1,lhi1,lid2,llo2,lhi2], y: gT2[rD,rV,rid1,rlo1,rhi1,rid2,rlo2,rhi2]): expr =
   x[UniversalDummyIndex,UniversalDummyIndex] = y[UniversalDummyIndex,UniversalDummyIndex]
 macro autoIndexAsgn[T](lhs: T, rhs: T): stmt =
-  dbgDetail "autoIndexAsgn <= lhs: ", lhs
-  dbgDetail "autoIndexAsgn <= rhs: ", rhs
+  dbg "autoIndexAsgn <= lhs: ", lhs, TPLDebug.detail
+  dbg "autoIndexAsgn <= rhs: ", rhs, TPLDebug.detail
   var lhs = lhs
   if lhs.kind == nnkHiddenDeref: lhs = lhs[0]
   if lhs.kind in CallNodes and $lhs[0] == "[]": # Indexing operation
@@ -303,13 +304,13 @@ macro autoIndexAsgn[T](lhs: T, rhs: T): stmt =
   else:
     result = lhs
   result = newAssignment(result, rhs)
-  dbgDetail "autoIndexAsgn => ", result
+  dbg "autoIndexAsgn => ", result, TPLDebug.detail
 
 ####################
 # tensor ops
 macro temporaryTensorEq(lhs: untyped, rhs: typed): stmt =
-  dbgDetail "temporaryTensorEq:lhs: ", lhs
-  dbgDetail "temporaryTensorEq:rhs: ", rhs
+  dbg "temporaryTensorEq:lhs: ", lhs, TPLDebug.detail
+  dbg "temporaryTensorEq:rhs: ", rhs, TPLDebug.detail
   result = newStmtList().add(newNimNode(nnkVarSection), newAssignment(lhs, rhs))
   let rhsT = newCall(bindsym"type", rhs)
   if lhs.kind == nnkBracketExpr and lhs.len > 0:
@@ -461,7 +462,7 @@ proc rebindAssignment(n: NimNode): NimNode =
   else:
     result = n
 macro reAssign(n: untyped): stmt =
-  dbgFlow "reAssign <= ", n
+  dbg "reAssign <= ", n, TPLDebug.flow
   proc g(n: NimNode): NimNode =
     if n.kind == nnkStmtList:
       result = newStmtList()
@@ -477,7 +478,7 @@ macro reAssign(n: untyped): stmt =
     else:
       result = n.rebindAssignment
   result = n.g
-  # dbgFlow "reAssign => ", result
+  # dbg "reAssign => ", result, TPLDebug.flow
 
 type
   Ixk = enum
@@ -860,7 +861,7 @@ proc contractDummyU(n: NimNode): NimNode =
       assert i.kind == ixkI
       result[0].add newIdentDefs(i.vId, newCall(bindsym"Dummy", ident($i.vIt)))
 macro convertDummyU(n: typed): stmt =
-  dbgFlow "convertDummyU <= ", n
+  dbg "convertDummyU <= ", n, TPLDebug.flow
   proc g(n: NimNode): NimNode =
     if n.kind == nnkStmtList:
       result = newStmtList()
@@ -876,7 +877,7 @@ macro convertDummyU(n: typed): stmt =
     else:
       result = n.contractDummyU
   result = n.g
-  dbgFlow "convertDummyU => ", result
+  dbg "convertDummyU => ", result, TPLDebug.flow
 
 proc dummyLoopGen(ix: seqset[NimNode], n: NimNode): NimNode =
   proc reCall(n: NimNode): NimNode =
@@ -911,7 +912,7 @@ proc indexedTensor(m: NimNode): NimNode =
     result = newEmptyNode()
 var temporaryTensorId {.compileTime.} = 0
 macro splitLhsDuplicate(n: typed): stmt =
-  dbgFlow "splitLhsDuplicate <= ", n
+  dbg "splitLhsDuplicate <= ", n, TPLDebug.flow
   # hint ">>>> splitLhsDuplicate <= " & n.treerepr
   # x[a,b] = y[b]
   #  -> x[a.head,b] = y[b]
@@ -921,7 +922,7 @@ macro splitLhsDuplicate(n: typed): stmt =
   # echo "     ", n.repr
   result = n                    # By default.
   let t = n.genDummyTree
-  dbgDetail "dummytree:\n" & t.treerepr
+  dbg("dummytree:\n" & t.treerepr, lvl = TPLDebug.detail)
   if n.isAutoSumStmt:
     let
       lhs = n.getlhs
@@ -934,8 +935,8 @@ macro splitLhsDuplicate(n: typed): stmt =
       commonIx = lhsIx - lhsLocalIx
     # echo "lhs:        ", lhs.lisprepr
     # echo "lhsLocalIx: ", lhsLocalIx.repr
-    dbgDetail "dummytree:lhsT: " & lhsT.lisprepr
-    dbgDetail "dummytree:rhsT: " & rhsT.lisprepr
+    dbg("dummytree:lhsT: " & lhsT.lisprepr, lvl = TPLDebug.detail)
+    dbg("dummytree:rhsT: " & rhsT.lisprepr, lvl = TPLDebug.detail)
     if lhsLocalIx.len > 0 and rhsT == newEmptyNode(): # RHS is not a simple tensor.
       if n.kind == nnkAsgn or (n.kind in CallNodes and $n[0] == "[]="):
         var
@@ -967,10 +968,10 @@ macro splitLhsDuplicate(n: typed): stmt =
           tt.add i
         result = newStmtList().add(newCall(bindsym"temporaryTensorEq", tt, rhs))
         result.add n.reAssembleBinOp(lhs, tt)
-  dbgDetail "splitLhsduplicate => ", result
+  dbg "splitLhsduplicate => ", result, TPLDebug.detail
   # hint "<<<< splitLhsDuplicate => " & result.treerepr
 macro splitRhsSum(n: typed): stmt =
-  dbgFlow "splitRhsSum <= ", n
+  dbg "splitRhsSum <= ", n, TPLDebug.flow
   # echo "\n>>>> splitRhsSum <= ", n.repr
   # hint ">>>> splitRhsSum <= " & n.treerepr
   # x[a] = y[a] `op` z[a,b]
@@ -1040,7 +1041,7 @@ macro splitRhsSum(n: typed): stmt =
     result = n
   # hint "<<<< splitRhsSum => " & result.treerepr
 macro splitMultiOp(n: typed): stmt =
-  dbgFlow "splitMultiOp <= ", n
+  dbg "splitMultiOp <= ", n, TPLDebug.flow
   # echo "\n>>>> splitMultiOp <= ", n.repr
   result = n
   # echo "<<<< splitMultiOp => ", result.repr
@@ -1130,7 +1131,7 @@ macro splittingHelper(n: typed): stmt =
 template splitting(n: typed): stmt =
   fixpointcall(splittingHelper, n)
 macro autoSum(n: typed): stmt =
-  dbgFlow "autoSum <= ", n
+  dbg "autoSum <= ", n, TPLDebug.flow
   # hint ">>>> autoSum <= " & n.treerepr
   proc g(n: NimNode): NimNode =
     if n.kind == nnkStmtList:
@@ -1158,7 +1159,7 @@ proc loopDummy(n: NimNode): NimNode =
   # echo "---- t: ", t.treerepr
   result = rhsLocalIx.dummyLoopGen otherIx.dummyLoopGen n
 macro looping(n: typed): stmt =
-  dbgFlow "looping <= ", n
+  dbg "looping <= ", n, TPLDebug.flow
   # hint ">>>> looping: <= " & n.treerepr
   proc g(n: NimNode): NimNode =
     # echo "\n>>>> looping:g <= ", n.repr
@@ -1185,9 +1186,9 @@ macro looping(n: typed): stmt =
     # echo "<<<< looping:g => ", result.repr
   result = n.g
   # hint "<<<< looping => " & result.treerepr
-  dbgDetail "looping => ", result
+  dbg "looping => ", result, TPLDebug.detail
 macro fusionHelper(n: typed): stmt =
-  dbgFlow "fusion <= ", n
+  dbg "fusion <= ", n, TPLDebug.flow
   # hint ">>>> fusion <= " & n.treerepr
   proc g(n: NimNode): NimNode =
     # echo "#### fusion:g <= ", n.repr
@@ -1251,11 +1252,14 @@ macro fusionHelper(n: typed): stmt =
     # echo "<<<< fusion:g => ", result.repr
   result = n.g
   # hint "<<<< fusion => " & result.treerepr
-  dbgDetail "fusion => ", result
+  dbg "fusion => ", result, TPLDebug.detail
 template fusion(n: typed): stmt =
   fixpointcall(fusionHelper, n)
-macro show(s: string, n: typed): stmt =
-  dbgOutput s.strval, n
+macro showEffect(s: string, n: typed): stmt =
+  dbg s.strval, n, TPLDebug.effect
+  result = n
+macro showOutput(s: string, n: typed): stmt =
+  dbg s.strval, n, TPLDebug.output
   result = n
 macro showCallResult(n: untyped): stmt =
   proc g(n: NimNode): NimNode =
@@ -1263,12 +1267,12 @@ macro showCallResult(n: untyped): stmt =
       result = n.copyNimNode
       result.add n[0]
       result.add n[1].g
-      result = newCall(bindsym"show", newlit($n[0] & " => "), result)
+      result = newCall(bindsym"showOutput", newlit($n[0] & " => "), result)
     elif n.kind == nnkStmtList and n.len == 1 and n[0].kind in CallNodes:
       result = n[0].g
     else:
       result = n
-  result = n.g
+  result = newCall(bindsym"showEffect", newLit"FINAL", n.g)
   # dbg "showCallResult:", result
 macro tensorOps*(n: untyped): stmt =
   template tensorOpsHelper(n: untyped): stmt =
