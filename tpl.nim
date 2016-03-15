@@ -939,7 +939,7 @@ macro splitLhsDuplicate(n: typed): stmt =
     # echo "lhsLocalIx: ", lhsLocalIx.repr
     dbg("dummytree:lhsT: " & lhsT.lisprepr, lvl = TPLDebug.detail)
     dbg("dummytree:rhsT: " & rhsT.lisprepr, lvl = TPLDebug.detail)
-    if lhsLocalIx.len > 0 and rhsT == newEmptyNode(): # RHS is not a simple tensor.
+    if lhsLocalIx.len > 0 and rhs.kind in CallNodes and rhsT == newEmptyNode(): # RHS is not a simple tensor.
       if n.kind == nnkAsgn or (n.kind in CallNodes and $n[0] == "[]="):
         var
           stmtHead = n
