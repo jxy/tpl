@@ -6,17 +6,17 @@ import strutils
 
 type
   TPLDebug* {.pure.} = enum
-    none, effect, output, flow, detail
+    none, final, output, flow, detail
 proc `$`(t: TPLDebug): string =
   case t
   of TPLDebug.none: "NONE"
-  of TPLDebug.effect: "EFFECT"
+  of TPLDebug.final: "FINAL"
   of TPLDebug.output: "OUTPUT"
   of TPLDebug.flow: "FLOW"
   of TPLDebug.detail: "DETAIL"
 var
-  TPLDebugLevel {.compileTime.} = TPLDebug.effect
-proc dbg(s: string = "", n: NimNode = newEmptyNode(), lvl: TPLDebug = TPLDebug.effect) =
+  TPLDebugLevel {.compileTime.} = TPLDebug.final
+proc dbg(s: string = "", n: NimNode = newEmptyNode(), lvl: TPLDebug = TPLDebug.final) =
   if TPLDebugLevel >= lvl:
     let ns = if TPLDebugLevel >= TPLDebug.detail: n.treerepr else: n.repr
     if n == newEmptyNode():
@@ -155,8 +155,6 @@ converter dummy2float*[id,lo,hi:static[int]](i: gTindexDummy[id,lo,hi]): float {
 
 template Dummy*[id,lo,hi:static[int]](t: typedesc[gTindex[id,lo,hi]]): typedesc[gTindexDummy[id,lo,hi]] =
   gTindexDummy[id,lo,hi]
-template IndexType[id,lo,hi:static[int]](t: gTindexDummy[id,lo,hi]): typedesc[gTindex[id,lo,hi]] =
-  gTindex[id,lo,hi]
 iterator items*[id,lo,hi:static[int]](t: gTindexDummy[id,lo,hi]): gTindex[id,lo,hi] =
   const
     cid = id
@@ -168,7 +166,7 @@ iterator items*[id,lo,hi:static[int]](t: gTindexDummy[id,lo,hi]): gTindex[id,lo,
     if i.i == chi: break
     inc i.i
 template head*[id,lo,hi:static[int]](t: gTindexDummy[id,lo,hi]): gTindex[id,lo,hi] =
-  IndexType(t)(i: lo)
+  index(gTindex[id,lo,hi], lo)
 iterator tail*(id, lo, hi: static[int]): gTindex[id,lo,hi] =
   const
     cid = id
@@ -198,7 +196,7 @@ template IndexType*[D,V;id1,lo1,hi1,id2,lo2,hi2:static[int]](t: gT2[D,V,id1,lo1,
     Index2 = gTindex[id2,lo2,hi2]
   choice(n, Index1, Index2)
 template index*[id,lo,hi:static[int]](d:gTindexDummy[id,lo,hi], n:static[int]): expr =
-  index(IndexType(d), n)
+  index(gTindex[id,lo,hi], n)
 
 proc `[]`*[D,V;id1,lo1,hi1:static[int]](x: gT1[D,V,id1,lo1,hi1], i1: gTindexDummy[id1,lo1,hi1]): V {.nodecl.} = discard
 proc `[]`*[D,V;id1,lo1,hi1:static[int]](x: var gT1[D,V,id1,lo1,hi1], i1: gTindexDummy[id1,lo1,hi1]): var V {.nodecl.} = discard
@@ -864,7 +862,9 @@ proc contractDummyU(n: NimNode): NimNode =
       result = result.replace s
     let ix = ixt.collectDummy.rmReplaced reps
     result = newStmtList().add(
-      newNimNode(nnkVarSection),
+      newNimNode(nnkVarSection).add(
+        newIdentDefs(gensym(nskVar, "__TPL__INTERNAL_REMOVE__"), newEmptyNode(), newLit(0))
+      ),
       result
     )
     for i in ix:
@@ -897,6 +897,7 @@ template forIndex*[id,lo,hi:static[int]](s: expr, i: gTindexDummy[id,lo,hi], bod
     body
 var forDummyId {.compileTime.} = 0
 proc dummyLoopGen(ix: seqset[NimNode], n: NimNode): NimNode =
+  # echo "dummyLoopGen:n:\n", n.treerepr
   result = n
   for i in ix:
     let id = gensym(nskForVar, "__F" & $forDummyId)
@@ -908,6 +909,8 @@ proc dummyLoopGen(ix: seqset[NimNode], n: NimNode): NimNode =
       result = newCall(bindsym"forIndexCall", id, ident($i[0]), i[1], body)
     else:
       error "Cannot generate for loops for: " & n.treerepr
+  #   echo "dummyLoopGen:", i, ":result:\n", result.treerepr
+  # echo "dummyLoopGen:final result\n", result.treerepr
 proc indexedTensor(m: NimNode): NimNode =
   var n = m
   if n.kind == nnkHiddenDeref: n = m[0]
@@ -948,16 +951,13 @@ macro splitLhsDuplicate(n: typed): stmt =
       if n.kind == nnkAsgn or (n.kind in CallNodes and $n[0] == "[]="):
         var
           stmtHead = n
-          constHead = newNimNode(nnkConstSection)
           lhsTail = newseq[NimNode](lhsLocalIx.len)
         for m in 0..<lhsTail.len:
           lhsTail[m] = lhs
         for n, i in lhsLocalIx:
           let
-            iheadCall = newCall(bindsym"head", i)
-            ihead = gensym(nskConst, "__C__" & i.dummyStr)
+            ihead = newCall(bindsym"head", i)
             itail = newCall(bindsym"tail", i)
-          constHead.add(newNimNode(nnkConstDef).add(ihead, newEmptyNode(), iheadCall))
           stmtHead = stmtHead.convert(i, ihead)
           for m in 0..<lhsTail.len:
             if m < n:
@@ -965,7 +965,7 @@ macro splitLhsDuplicate(n: typed): stmt =
             elif m == n:
               lhsTail[m] = lhsTail[m].convert(i, itail)
             # Else, for m > n, do nothing.
-        result = newStmtList().add(constHead, stmtHead)
+        result = newStmtList().add(stmtHead)
         for c in lhsTail:
           result.add c.newAssignment stmtHead.getlhs
       else:
@@ -1065,16 +1065,13 @@ proc accumulateAutoSum(n: NimNode): NimNode =
     if n.kind == nnkAsgn or fun == "[]=":
       var
         stmtHead = n
-        constHead = newNimNode(nnkConstSection)
         accum = newseq[NimNode](rhsLocalIx.len)
       for m in 0..<accum.len:
         accum[m] = infix(lhs, "+=", rhs)
       for n, i in rhsLocalIx:
         let
-          iheadCall = newCall(bindsym"head", i)
-          ihead = gensym(nskConst, "__C__" & i.dummyStr)
+          ihead = newCall(bindsym"head", i)
           itail = newCall(bindsym"tail", i)
-        constHead.add(newNimNode(nnkConstDef).add(ihead, newEmptyNode(), iheadCall))
         stmtHead = stmtHead.convert(i, ihead)
         for m in 0..<accum.len:
           if m < n:
@@ -1082,7 +1079,7 @@ proc accumulateAutoSum(n: NimNode): NimNode =
           elif m == n:
             accum[m] = accum[m].convert(i, itail)
           # Else, for m > n, do nothing.
-      result = newStmtList().add(constHead, stmtHead)
+      result = newStmtList().add(stmtHead)
       for c in accum:
         result.add c
     elif fun in ["*=", "/="]: # Need a temporary.
@@ -1194,6 +1191,32 @@ macro looping(n: typed): stmt =
   result = n.g
   # hint "<<<< looping => " & result.treerepr
   dbg "looping => ", result, TPLDebug.detail
+macro cleanup(n: typed): stmt =
+  dbg "cleanup <= ", n, TPLDebug.flow
+  proc g(n: NimNode): NimNode =
+    # echo "\n>>>> cleanup:g <= ", n.treerepr
+    if n.kind == nnkStmtList:
+      result = newStmtList()
+      for c in n:
+        # Skip varsection with the magic string.
+        if c.kind != nnkVarSection or $c[0][0] != "__TPL__INTERNAL_REMOVE__":
+          if c.kind == nnkStmtList: # Flatten out nested stmtlist.
+            for cc in c.g:
+              result.add cc
+          else:
+            result.add c.g
+    elif n.kind == nnkBlockStmt:
+      result = newBlockstmt(n[0], n[1].g)
+    elif n.kind in RoutineNodes:
+      result = n
+      result[6] = n[6].g
+    elif n.kind == nnkForStmt:
+      result = n
+      result[^1] = n[^1].g
+    else:
+      result = n
+  result = n.g
+  dbg "cleanup => ", result, TPLDebug.detail
 macro fusionHelper(n: typed): stmt =
   dbg "fusion <= ", n, TPLDebug.flow
   # hint ">>>> fusion <= " & n.treerepr
@@ -1264,8 +1287,8 @@ macro fusionHelper(n: typed): stmt =
   dbg "fusion => ", result, TPLDebug.detail
 template fusion(n: typed): stmt =
   fixpointcall(fusionHelper, n)
-macro showEffect(s: string, n: typed): stmt =
-  dbg s.strval, n, TPLDebug.effect
+macro showFinal(s: string, n: typed): stmt =
+  dbg s.strval, n, TPLDebug.final
   result = n
 macro showOutput(s: string, n: typed): stmt =
   dbg s.strval, n, TPLDebug.output
@@ -1281,26 +1304,33 @@ macro showCallResult(n: untyped): stmt =
       result = n[0].g
     else:
       result = n
-  result = newCall(bindsym"showEffect", newLit"FINAL:", n.g)
-  # dbg "showCallResult:", result
-macro tensorOps*(n: untyped): stmt =
-  template tensorOpsHelper(n: untyped): stmt =
-      showCallResult fusion looping autoSum splitting convertDummyU reAssign n
+  result = newCall(bindsym"showFinal", newLit" => ", n.g)
+macro withDbgLevel(verbose: static[TPLDebug], n: untyped): stmt =
+  template g(v: TPLDebug, n: untyped): stmt =
+    static:
+      const OldLvl = TPLDebugLevel
+      TPLDebugLevel = TPLDebug(v)
+    n
+    static:
+      TPLDebugLevel = OldLvl
+  result = getast g(verbose, n)
+template tensorOpsHelper(v: TPLDebug, n: untyped): stmt =
+  withDbgLevel TPLDebug(v):
+    showCallResult fusion cleanup looping autoSum splitting convertDummyU reAssign n
+proc tensorOpsWithDbgLevel(v: TPLDebug, n: NimNode): NimNode =
   if n.kind in RoutineNodes:
     result = n
-    result[6] = getast(tensorOpsHelper(n[6]))
+    result[6] = getast tensorOpsHelper(v, n[6])
   else:
-    result = getast(tensorOpsHelper(n))
+    result = getast tensorOpsHelper(v, n)
+macro tensorOps*(n: untyped): stmt =
+  result = tensorOpsWithDbgLevel(TPLDebug.final, n)
 macro tensorOpsTrace*(verbose: static[TPLDebug], n: untyped): stmt =
-  template tensorOpsTraceHelper(v: TPLDebug, n: untyped): stmt =
-    const OldLvl = TPLDebugLevel
-    static: TPLDebugLevel = TPLDebug(v)
-    n
-    static: TPLDebugLevel = OldLvl
-  result = getast tensorOpsTraceHelper(verbose, getast(tensorOps n))
-  # dbg "tensorOpsTrace:", result
+  result = tensorOpsWithDbgLevel(verbose, n)
+macro tensorOpsSilent*(n: untyped): stmt =
+  result = tensorOpsWithDbgLevel(TPLDebug.none, n)
 
-proc `$`*[D,V;id1,lo1,hi1:static[int]](v: gT1[D,V,id1,lo1,hi1]): string {.tensorOps.} =
+proc `$`*[D,V;id1,lo1,hi1:static[int]](v: gT1[D,V,id1,lo1,hi1]): string {.tensorOpsSilent.} =
   var i: Dummy(IndexType(v, 1))
   result = ""
   if i == i.type.lo:
@@ -1312,7 +1342,7 @@ proc `$`*[D,V;id1,lo1,hi1:static[int]](v: gT1[D,V,id1,lo1,hi1]): string {.tensor
     result &= ","
   else:
     result &= "\t]"
-proc `$`*[D,V;id1,lo1,hi1,id2,lo2,hi2:static[int]](m: gT2[D,V,id1,lo1,hi1,id2,lo2,hi2]): string {.tensorOps.} =
+proc `$`*[D,V;id1,lo1,hi1,id2,lo2,hi2:static[int]](m: gT2[D,V,id1,lo1,hi1,id2,lo2,hi2]): string {.tensorOpsSilent.} =
   var
     i: Dummy(IndexType(m, 1))
     j: Dummy(IndexType(m, 2))
