@@ -886,6 +886,8 @@ proc dummyLoopGen(ix: seqset[NimNode], n: NimNode): NimNode =
     result = n.copy # If we don't do copy, we will change n as well.
     if n.kind in CallNodes:
       result[0] = ident($n[0])
+      # if result.len > 1 and result[1].kind != nnkPar:
+      #   result[1] = result[1].newPar
   result = n
   for i in ix:
     # echo i.repr, " : ", i.gettype.lisprepr
@@ -1218,12 +1220,12 @@ macro fusionHelper(n: typed): stmt =
               forBody.add c.copy # Require this copy to avoid illegal storage access.
           else:
             forBody.add sndBody
-          for j in 0..<forBody.len: # Still need to make it recheck types.
-            if forBody[j].kind in CallNodes and forBody[j][0].kind == nnkSym:
-              forBody[j][0] = ident($forBody[j][0])
-              for k in 1..<forBody[j].len:
-                if forBody[j][k].kind != nnkPar:
-                  forBody[j][k] = forBody[j][k].newPar
+          # for j in 0..<forBody.len: # Still need to make it recheck types.
+          #   if forBody[j].kind in CallNodes and forBody[j][0].kind == nnkSym:
+          #     forBody[j][0] = ident($forBody[j][0])
+          #     for k in 1..<forBody[j].len:
+          #       if forBody[j][k].kind != nnkPar:
+          #         forBody[j][k] = forBody[j][k].newPar
           forstmt.add forBody
           result.add forstmt
           inc i, 2
@@ -1242,8 +1244,8 @@ macro fusionHelper(n: typed): stmt =
       if n[^1].kind in {nnkStmtList, nnkForStmt}:
         result.add n[^1].g
       elif n[^1].kind in CallNodes:
-        result.add n[^1].copy
-        if result[^1][1].kind != nnkPar:
+        result.add n[^1].copy   # We don't change n.
+        if result[^1].len > 1 and result[^1][1].kind != nnkPar:
           result[^1][1] = result[^1][1].newPar # Another ODD workaround for type mismatch.
       else:
         result.add n[^1]
