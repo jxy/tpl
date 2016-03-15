@@ -33,6 +33,16 @@ type
     i: range[lo..hi]
 converter idx2int*[id,lo,hi:static[int]](i: gTindex[id,lo,hi]): int = i.i
 converter idx2float*[id,lo,hi:static[int]](i: gTindex[id,lo,hi]): float = i.i.float
+iterator indices(id, lo, hi: static[int]): gTindex[id,lo,hi] =
+  const
+    cid = id
+    clo = lo
+    chi = hi
+  var i = gTindex[cid,clo,chi](i: lo)
+  while true:
+    yield i
+    if i.i == hi: break
+    inc i.i
 iterator items*[id,lo,hi:static[int]](t: typedesc[gTindex[id,lo,hi]]): t =
   var i = t(i: lo)
   while true:
@@ -45,9 +55,7 @@ var IndexID {.compileTime.} = 0
 proc nextIndexID: int {.compileTime.} =
   result = IndexID
   inc IndexID
-template IndexType*(lo, hi: int): expr =
-  type Index = gTindex[nextIndexID(),lo,hi]
-  Index
+template IndexType*(lo, hi: int): typedesc = gTindex[nextIndexID(),lo,hi]
 template staticInbound(n, lo, hi: static[int]): expr =
   static:
     if n < lo or n > hi:
@@ -145,28 +153,30 @@ type
 converter dummy2int*[id,lo,hi:static[int]](i: gTindexDummy[id,lo,hi]): int {.nodecl.} = discard
 converter dummy2float*[id,lo,hi:static[int]](i: gTindexDummy[id,lo,hi]): float {.nodecl.} = discard
 
-template Dummy*[id,lo,hi:static[int]](t: typedesc[gTindex[id,lo,hi]]): expr =
-  type Dummy = gTindexDummy[id,lo,hi]
-  Dummy
-template IndexType[id,lo,hi:static[int]](t: typedesc[gTindexDummy[id,lo,hi]]): expr =
-  type Index = gTindex[id,lo,hi]
-  Index
-template IndexType[id,lo,hi:static[int]](t: gTindexDummy[id,lo,hi]): expr =
-  t.type.IndexType
-iterator items*[id,lo,hi:static[int]](t: gTindexDummy[id,lo,hi]): auto =
-  type Index = IndexType(t)
-  var i = Index(i: lo)
+template Dummy*[id,lo,hi:static[int]](t: typedesc[gTindex[id,lo,hi]]): typedesc[gTindexDummy[id,lo,hi]] =
+  gTindexDummy[id,lo,hi]
+template IndexType[id,lo,hi:static[int]](t: gTindexDummy[id,lo,hi]): typedesc[gTindex[id,lo,hi]] =
+  gTindex[id,lo,hi]
+iterator items*[id,lo,hi:static[int]](t: gTindexDummy[id,lo,hi]): gTindex[id,lo,hi] =
+  const
+    cid = id
+    clo = lo
+    chi = hi
+  var i = gTindex[cid,clo,chi](i: clo)
   while true:
     yield i
-    if i.i == hi: break
+    if i.i == chi: break
     inc i.i
-template head*[id,lo,hi:static[int]](t: gTindexDummy[id,lo,hi]): auto =
+template head*[id,lo,hi:static[int]](t: gTindexDummy[id,lo,hi]): gTindex[id,lo,hi] =
   IndexType(t)(i: lo)
-iterator tail*[id,lo,hi:static[int]](t: gTindexDummy[id,lo,hi]): auto =
-  type Index = IndexType(t)
-  const lo1 = lo + 1
+iterator tail*(id, lo, hi: static[int]): gTindex[id,lo,hi] =
+  const
+    cid = id
+    clo = lo
+    chi = hi
+    lo1 = lo + 1
   if lo1 <= hi:
-    var i = Index(i: lo1)
+    var i = gTindex[cid,clo,chi](i: lo1)
     while true:
       yield i
       if i.i == hi: break
@@ -879,30 +889,25 @@ macro convertDummyU(n: typed): stmt =
   result = n.g
   dbg "convertDummyU => ", result, TPLDebug.flow
 
+template forIndexCall*[id,lo,hi:static[int]](s, f: expr, i: gTindexDummy[id,lo,hi], body: expr): stmt =
+  for s in f(id, lo, hi):
+    body
+template forIndex*[id,lo,hi:static[int]](s: expr, i: gTindexDummy[id,lo,hi], body: expr): stmt =
+  for s in indices(id, lo, hi):
+    body
+var forDummyId {.compileTime.} = 0
 proc dummyLoopGen(ix: seqset[NimNode], n: NimNode): NimNode =
-  proc reCall(n: NimNode): NimNode =
-    # Look up symbol again to change a proc call to an iterator call.
-    # FIXME: needs a more sophisticated treatment.
-    result = n.copy # If we don't do copy, we will change n as well.
-    if n.kind in CallNodes:
-      result[0] = ident($n[0])
-      # if result.len > 1 and result[1].kind != nnkPar:
-      #   result[1] = result[1].newPar
   result = n
   for i in ix:
-    # echo i.repr, " : ", i.gettype.lisprepr
-    # var ii = i.copy
-    # if ii.kind in CallNodes: ii[0] = ident($ii[0])
-    # hint "#### i: " & i.lisprepr
-    let
-      id = gensym(nskForVar, "__F__" & i.dummyStr)
-      ii = i.reCall
-    # hint "#### i: " & i.lisprepr
+    let id = gensym(nskForVar, "__F" & $forDummyId)
+    inc forDummyId
     var body = result.convert(i, id)
-    # hint "**** dummyLoopGen:body => " & body.treerepr
-    # if body.kind != nnkStmtList:
-    #   body = newPar(body)
-    result = newNimNode(nnkForStmt).add(id, ii, body)
+    if i.kind == nnkSym:
+      result = newCall(bindsym"forIndex", id, i, body)
+    elif i.kind in CallNodes and i.len == 2:
+      result = newCall(bindsym"forIndexCall", id, ident($i[0]), i[1], body)
+    else:
+      error "Cannot generate for loops for: " & n.treerepr
 proc indexedTensor(m: NimNode): NimNode =
   var n = m
   if n.kind == nnkHiddenDeref: n = m[0]
@@ -1220,13 +1225,15 @@ macro fusionHelper(n: typed): stmt =
               forBody.add c.copy # Require this copy to avoid illegal storage access.
           else:
             forBody.add sndBody
-          # for j in 0..<forBody.len: # Still need to make it recheck types.
-          #   if forBody[j].kind in CallNodes and forBody[j][0].kind == nnkSym:
-          #     forBody[j][0] = ident($forBody[j][0])
-          #     for k in 1..<forBody[j].len:
-          #       if forBody[j][k].kind != nnkPar:
-          #         forBody[j][k] = forBody[j][k].newPar
-          forstmt.add forBody
+          for j in 0..<forBody.len: # Still need to make it recheck types.
+            if forBody[j].kind in CallNodes and forBody[j][0].kind == nnkSym:
+              # forBody[j][0] = ident($forBody[j][0])
+              if forBody[j][1].kind != nnkPar:
+                forBody[j][1] = forBody[j][1].newPar
+              # for k in 1..<forBody[j].len:
+              #   if forBody[j][k].kind != nnkPar:
+              #     forBody[j][k] = forBody[j][k].newPar
+          forstmt.add forBody.g
           result.add forstmt
           inc i, 2
         else:
@@ -1274,7 +1281,7 @@ macro showCallResult(n: untyped): stmt =
       result = n[0].g
     else:
       result = n
-  result = newCall(bindsym"showEffect", newLit"FINAL", n.g)
+  result = newCall(bindsym"showEffect", newLit"FINAL:", n.g)
   # dbg "showCallResult:", result
 macro tensorOps*(n: untyped): stmt =
   template tensorOpsHelper(n: untyped): stmt =
