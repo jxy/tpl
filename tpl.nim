@@ -1244,12 +1244,11 @@ proc collectTensors(n: NimNode): (seqset[NimNode], seqset[NimNode]) =
   lv.init
   vl.init
   template recurseAdd(nn): stmt =
-    for c in nn:
-      let (a, b) = c.collectTensors
-      for x in a:
-        lv.incl x
-      for x in b:
-        vl.incl x
+    let (a, b) = nn.collectTensors
+    for x in a:
+      lv.incl x
+    for x in b:
+      vl.incl x
   if n.kind == nnkAsgn:
     var
       nn = if n[0].kind == nnkHiddenDeref: n[0][0] else: n[0]
@@ -1270,33 +1269,38 @@ proc collectTensors(n: NimNode): (seqset[NimNode], seqset[NimNode]) =
       # echo "collectTensors:fp: ", fp.repr
       # if fp[0].kind == nnkVarTy: # Return a var (lvalue).
       #   error "what do we do here?"
+      var k = 1
       for i in 1..<fp.len:            # List of params.
-        if fp[i][1].kind == nnkVarTy: # Is a var param.
-          if n[i].kind in CallNodes:
-            # Don't care.
-            recurseAdd n[i]
-          else:
-            var t = newNimNode(nnkBracketExpr)
-            if n[i].kind == nnkSym:
-              t.add n[i]
-            elif n[i].kind in {nnkHiddenDeref, nnkHiddenAddr} and n[i][0].kind == nnkSym:
-              t.add n[i][0]
+        if fp[i][^2].kind == nnkVarTy: # Is a var param.
+          for j in 0..<fp[i].len-2:
+            if n[k+j].kind in CallNodes:
+              # Don't care.
+              recurseAdd n[k+j]
             else:
-              error "Don't know how to extract tensors from: " & n.treerepr
-            if i == 1:
-              if $n[0] == "[]":
-                for j in 1..<n.len:
-                  t.add n[j]
-              if $n[0] == "[]=":
-                for j in 1..<n.len-1:
-                  t.add n[j]
-            lv.incl t
+              var t = newNimNode(nnkBracketExpr)
+              if n[k+j].kind == nnkSym:
+                t.add n[k+j]
+              elif n[k+j].kind in {nnkHiddenDeref, nnkHiddenAddr} and n[k+j][0].kind == nnkSym:
+                t.add n[k+j][0]
+              else:
+                error "Don't know how to extract tensors from: " & n.treerepr
+              if i == 1:
+                if $n[0] == "[]":
+                  for m in 2..<n.len:
+                    t.add n[m]
+                if $n[0] == "[]=":
+                  for m in 2..<n.len-1:
+                    t.add n[m]
+              lv.incl t
         else:
-          recurseAdd n[i]
+          for j in 0..<fp[i].len-2:
+            recurseAdd n[k+j]
+        k.inc(fp[i].len-2)
     else:
       error "Don't know how to extract tensors from: " & n.treerepr
   else:
-    recurseAdd n
+    for c in n:
+      recurseAdd c
   result = (lv, vl)
   # echo "collectTensors:result => ", result.repr
 proc conflictTensorIndexing(xs: seqset[NimNode], i: NimNode, ys: seqset[NimNode], j: NimNode): bool =

@@ -5,7 +5,7 @@ type
   V = Tensor(float, [Ix])
   M = Tensor(float, [Ix, Ix])
 var
-  i, j: Ix.Dummy
+  i, j, k: Ix.Dummy
   x: float
   v1, v2, v3, v4, v5: V
   m1, m2, m3, m4: M
@@ -43,3 +43,6 @@ tensorOps:
   x += v1
   echo "v1 = m1 = ", v1
   echo "x += v1 = ", x
+  echo "\nAnother test with an automatically split summation."
+  m3[i,k] = m1[i,j] * m2[j,i]
+  echo "m3[i,k] = m1[i,j] * m2[j,i] =\n", m3
