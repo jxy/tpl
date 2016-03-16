@@ -1447,12 +1447,10 @@ proc `$`*[D,V;id1,lo1,hi1,id2,lo2,hi2:static[int]](m: gT2[D,V,id1,lo1,hi1,id2,lo
     j: I2.Dummy
     ws: Tensor(int, [I1])
     xs: Tensor(string, [I1, I2])
-  xs[i,j] = $m[i,j]
-  if j == j.type.lo:
-    ws[i] = xs[i,j].len
-  elif ws[i] < xs[i,j].len:
-    ws[i] = xs[i,j].len
   result = ""
+  xs[i,j] = $m[i,j]
+  if ws[i] < xs[i,j].len:
+    ws[i] = xs[i,j].len
   if true:
     if i == i.type.lo:
       if j == j.type.lo:
@@ -1465,5 +1463,7 @@ proc `$`*[D,V;id1,lo1,hi1,id2,lo2,hi2:static[int]](m: gT2[D,V,id1,lo1,hi1,id2,lo
       result &= ","
     else:
       result &= " ]"
-      if j == j.type.hi:
+      if j < j.type.hi:
+        result &= ","
+      else:
         result &= "]"
