@@ -1235,6 +1235,105 @@ macro cleanup(n: typed): stmt =
       result = n
   result = n.g
   dbg "cleanup => ", result, TPLDebug.detail
+
+proc collectTensors(n: NimNode): (seqset[NimNode], seqset[NimNode]) =
+  # Returns tensors or scalars in the form of Par(BracketExpr())
+  # in two lists: those used as lvalues and those did not.
+  # echo "collectTensors:n <= ", n.repr
+  var lv, vl: seqset[NimNode]
+  lv.init
+  vl.init
+  template recurseAdd(nn): stmt =
+    for c in nn:
+      let (a, b) = c.collectTensors
+      for x in a:
+        lv.incl x
+      for x in b:
+        vl.incl x
+  if n.kind == nnkAsgn:
+    var
+      nn = if n[0].kind == nnkHiddenDeref: n[0][0] else: n[0]
+    # if nn.kind in CallNodes and $nn[0] == "[]":
+    #   var t = newNimNode(nnkBracketExpr)
+    #   for i in 0..<nn.len:
+    #     t.add nn[i]
+    #   lv.add t
+    if nn.kind == nnkSym:
+      lv.incl newNimNode(nnkBracketExpr).add nn
+    else:
+      error "Don't know how to extract tensors from: " & n.treerepr
+    recurseAdd n[1]
+  elif n.kind in CallNodes:
+    if n[0].kind == nnkSym:
+      # echo "collectTensors:n: ", n.repr
+      var fp = n[0].symbol.getimpl[3]
+      # echo "collectTensors:fp: ", fp.repr
+      # if fp[0].kind == nnkVarTy: # Return a var (lvalue).
+      #   error "what do we do here?"
+      for i in 1..<fp.len:            # List of params.
+        if fp[i][1].kind == nnkVarTy: # Is a var param.
+          if n[i].kind in CallNodes:
+            # Don't care.
+            recurseAdd n[i]
+          else:
+            var t = newNimNode(nnkBracketExpr)
+            if n[i].kind == nnkSym:
+              t.add n[i]
+            elif n[i].kind in {nnkHiddenDeref, nnkHiddenAddr} and n[i][0].kind == nnkSym:
+              t.add n[i][0]
+            else:
+              error "Don't know how to extract tensors from: " & n.treerepr
+            if i == 1:
+              if $n[0] == "[]":
+                for j in 1..<n.len:
+                  t.add n[j]
+              if $n[0] == "[]=":
+                for j in 1..<n.len-1:
+                  t.add n[j]
+            lv.incl t
+        else:
+          recurseAdd n[i]
+    else:
+      error "Don't know how to extract tensors from: " & n.treerepr
+  else:
+    recurseAdd n
+  result = (lv, vl)
+  # echo "collectTensors:result => ", result.repr
+proc conflictTensorIndexing(xs: seqset[NimNode], i: NimNode, ys: seqset[NimNode], j: NimNode): bool =
+  # Check each tensor/scalar BracketExpr(T,...) in xs, with the
+  # same in ys, return true if the index i in xs and j in ys are
+  # in different position of the same tensor or two scalar lvalue
+  # are the same.
+  # echo "conflictTensorIndexing:xs: ", xs.repr
+  # echo "conflictTensorIndexing:i: ", i.lisprepr
+  # echo "conflictTensorIndexing:ys: ", ys.repr
+  # echo "conflictTensorIndexing:j: ", j.lisprepr
+  result = false
+  for x in xs:
+    for y in ys:
+      if x[0] == y[0]:
+        result = true           # Conflict by default.
+        if x.len == y.len and x.len > 1:
+          for k in 1..<x.len:
+            if x[k] == i and y[k] == j: # Both indexing the same.
+              result = false
+            elif x[k] == i or y[k] == j: # One but not the other.
+              result = true
+        if result:              # Return if conflict.
+          return
+
+proc safeLoopFusion(fst, snd: NimNode): bool =
+  # echo "safeLoopFusion:fst <= ", fst.repr
+  # echo "safeLoopFusion:snd <= ", snd.repr
+  result = true
+  var
+    (lhs1, rhs1) = fst.collectTensors
+    (lhs2, rhs2) = snd.collectTensors
+  for i in 0..<fst.len-2:       # All loop variables.
+    result = result and not conflictTensorIndexing(lhs1, fst[i], lhs2, snd[i])
+    result = result and not conflictTensorIndexing(lhs1, fst[i], rhs2, snd[i])
+    result = result and not conflictTensorIndexing(rhs1, fst[i], lhs2, snd[i])
+
 macro fusionHelper(n: typed): stmt =
   dbg "fusion <= ", n, TPLDebug.flow
   # hint ">>>> fusion <= " & n.treerepr
@@ -1248,7 +1347,8 @@ macro fusionHelper(n: typed): stmt =
           fst = n[i]
           snd = if i < n.len-1: n[i+1] else: newEmptyNode()
         if fst.kind == nnkForStmt and snd.kind == nnkForStmt and
-           fst.len == snd.len and fst[^2] == snd[^2]: # ^2 is loop range.
+           fst.len == snd.len and fst[^2] == snd[^2] and # ^2 is loop range.
+           safeLoopFusion(fst, snd):
           var forstmt = newNimNode(nnkForStmt)
           for j in 0..<fst.len-1:
             forstmt.add fst[j]
@@ -1332,33 +1432,38 @@ macro tensorOpsSilent*(n: untyped): stmt =
 
 proc `$`*[D,V;id1,lo1,hi1:static[int]](v: gT1[D,V,id1,lo1,hi1]): string {.tensorOpsSilent.} =
   var i: Dummy(IndexType(v, 1))
-  result = ""
-  if i == i.type.lo:
-    result = "["
-  else:
-    result &= "\t"
-  result &= $v[i]
-  if i < i.type.hi:
-    result &= ","
-  else:
-    result &= "\t]"
+  result = "["
+  if true:                    # This would put them in the same loops.
+    result &= " " & $v[i]
+    if i < i.type.hi:
+      result &= ","
+  result &= " ]"
 proc `$`*[D,V;id1,lo1,hi1,id2,lo2,hi2:static[int]](m: gT2[D,V,id1,lo1,hi1,id2,lo2,hi2]): string {.tensorOpsSilent.} =
+  type
+    I1 = IndexType(m, 1)
+    I2 = IndexType(m, 2)
   var
-    i: Dummy(IndexType(m, 1))
-    j: Dummy(IndexType(m, 2))
-    # k: Dummy(IndexType(m, 0)) # compile time error: out of bounds
+    i: I1.Dummy
+    j: I2.Dummy
+    ws: Tensor(int, [I1])
+    xs: Tensor(string, [I1, I2])
+  xs[i,j] = $m[i,j]
+  if j == j.type.lo:
+    ws[i] = xs[i,j].len
+  elif ws[i] < xs[i,j].len:
+    ws[i] = xs[i,j].len
   result = ""
-  if i == i.type.lo:
-    if j == j.type.lo:
-      result &= "[[ "
+  if true:
+    if i == i.type.lo:
+      if j == j.type.lo:
+        result &= "[["
+      else:
+        result &= "\n ["
+    let n = ws[i] - xs[i,j].len
+    result &= " " & xs[i,j] & spaces(n)
+    if i < i.type.hi:
+      result &= ","
     else:
-      result &= "\n [ "
-  else:
-    result &= "\t"
-  result &= $m[i,j]
-  if i < i.type.hi:
-    result &= ","
-  else:
-    result &= "\t]"
-    if j == j.type.hi:
-      result &= "]"
+      result &= " ]"
+      if j == j.type.hi:
+        result &= "]"
