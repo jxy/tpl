@@ -23,6 +23,24 @@ proc dbg(s: string = "", n: NimNode = newEmptyNode(), lvl: TPLDebug = TPLDebug.f
       echo "DBG:", lvl, ":", s
     else:
       echo "DBG:", lvl, ":", s, ns
+macro showFinal(s: string, n: typed): stmt =
+  dbg s.strval, n, TPLDebug.final
+  result = n
+macro showOutput(s: string, n: typed): stmt =
+  dbg s.strval, n, TPLDebug.output
+  result = n
+macro showCallResult(n: untyped): stmt =
+  proc g(n: NimNode): NimNode =
+    if n.kind in CallNodes and n.len == 2:
+      result = n.copyNimNode
+      result.add n[0]
+      result.add n[1].g
+      result = newCall(bindsym"showOutput", newlit($n[0] & " => "), result)
+    elif n.kind == nnkStmtList and n.len == 1 and n[0].kind in CallNodes:
+      result = n[0].g
+    else:
+      result = n
+  result = newCall(bindsym"showFinal", newLit" => ", n.g)
 
 ####################
 # index type
@@ -1287,24 +1305,6 @@ macro fusionHelper(n: typed): stmt =
   dbg "fusion => ", result, TPLDebug.detail
 template fusion(n: typed): stmt =
   fixpointcall(fusionHelper, n)
-macro showFinal(s: string, n: typed): stmt =
-  dbg s.strval, n, TPLDebug.final
-  result = n
-macro showOutput(s: string, n: typed): stmt =
-  dbg s.strval, n, TPLDebug.output
-  result = n
-macro showCallResult(n: untyped): stmt =
-  proc g(n: NimNode): NimNode =
-    if n.kind in CallNodes and n.len == 2:
-      result = n.copyNimNode
-      result.add n[0]
-      result.add n[1].g
-      result = newCall(bindsym"showOutput", newlit($n[0] & " => "), result)
-    elif n.kind == nnkStmtList and n.len == 1 and n[0].kind in CallNodes:
-      result = n[0].g
-    else:
-      result = n
-  result = newCall(bindsym"showFinal", newLit" => ", n.g)
 macro withDbgLevel(verbose: static[TPLDebug], n: untyped): stmt =
   template g(v: TPLDebug, n: untyped): stmt =
     static:
