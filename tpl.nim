@@ -1467,8 +1467,7 @@ proc `$`*[D,V;id1,lo1,hi1,id2,lo2,hi2:static[int]](m: gT2[D,V,id1,lo1,hi1,id2,lo
         result &= "[["
       else:
         result &= "\n ["
-    let n = ws[i] - xs[i,j].len
-    result &= " " & xs[i,j] & spaces(n)
+    result &= " " & xs[i,j] & spaces(ws[i] - xs[i,j].len)
     if i < i.type.hi:
       result &= ","
     else:
