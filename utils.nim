@@ -4,6 +4,25 @@ import strutils
 iterator pairs*(n: NimNode): (int, NimNode) =
   for i in 0..<n.len:
     yield(i, n[i])
+proc rebindIndexing*(n: NimNode): NimNode =
+  if $n[0] == "[]":
+    result = newNimNode(nnkBracketExpr)
+    for i in 1..<n.len:
+      # if n[i].kind in {nnkHiddenDeref, nnkHiddenAddr}:
+      #   result.add n[i][0]
+      # else:
+        result.add n[i]
+  elif $n[0] == "[]=":
+    result = newNimNode(nnkBracketExpr)
+    for i in 1..<n.len-1:
+      # if n[i].kind in {nnkHiddenDeref, nnkHiddenAddr}:
+      #   result.add n[i][0]
+      # else:
+        result.add n[i]
+    result = newAssignment(result, n[^1])
+  else:
+    result = n
+
 proc replace*(n: NimNode, i: NimNode, j: NimNode): NimNode =
   # echo "\n>>>> replace"
   # echo n.lisprepr
@@ -65,25 +84,23 @@ proc convert*(n: NimNode, i: NimNode, j: NimNode): NimNode =
           else:
             result.nn[i] = nnn
       if result.nn.kind in CallNodes:
-        if result.nn[0].kind == nnkSym:
-          result.nn[0] = ident($result.nn[0].symbol)
-          # if "[]" == $result.nn[0]: # We may need this.
-          #   result.nn[0] = bindsym("[]", brOpen)
-          # if "[]" == $result.nn[0]: # We may need this.
-          #   var nnn = newNimNode(nnkBracketExpr)
-          #   for i in 1..<result.nn.len:
-          #     nnn.add result.nn[i]
-          #   result.nn = nnn
-        for i in 0..<result.nn.len:
-          # echo "#### ", result.nn[i].lisprepr
-          # if result.nn[i].kind in CallNodes+{nnkIfExpr}:
-          # If we need more par, try the above line first, with more node kinds.
-          if result.nn[i].kind in {nnkPrefix, nnkInfix, nnkCall, nnkIfExpr}:
-            result.nn[i] = newPar(result.nn[i])
-          # echo "#### ", result.nn[i].lisprepr
-      elif result.nn.kind == nnkHiddenDeref:
-        result.nn = result.nn[0]
-      elif result.nn.kind == nnkConv and result.nn[0].kind == nnkSym:
+        for i in 1..<result.nn.len:
+          if result.nn[i].kind notin AtomicNodes + {nnkPar}:
+            result.nn[i] = result.nn[i].newPar
+            # echo "#### ", result.nn[i].lisprepr
+        #   if result.nn[i].kind in {nnkHiddenDeref, nnkHiddenAddr}:
+        #     result.nn[i] = if result.nn[i][0].kind == nnkPar: result.nn[i][0] else: result.nn[i][0].newPar
+        #   elif result.nn[i].kind in {nnkPrefix, nnkInfix, nnkCall, nnkIfExpr}:
+        #     result.nn[i] = result.nn[i].newPar
+        # Make every sym ident would break generic function definitions.
+        # result.nn[0] = ident($result.nn[0].symbol)
+        # Limiting to indexing op only, may break with other replacment.
+        result.nn = result.nn.rebindIndexing
+      # elif result.nn.kind in {nnkHiddenDeref, nnkHiddenAddr}:
+      #   result.nn = if result.nn[0].kind == nnkPar: result.nn[0] else: result.nn[0].newPar
+      elif result.nn.kind == nnkConv:
+        # echo result.nn.treerepr
+        # result.nn[0] = ident($result.nn[0])
         var nnn = newCall(ident($result.nn[0].symbol))
         for i in 1..<result.nn.len:
           nnn.add result.nn[i]

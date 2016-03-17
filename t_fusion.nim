@@ -46,3 +46,9 @@ tensorOps:
   echo "\nAnother test with an automatically split summation."
   m3[i,k] = m1[i,j] * m2[j,i]
   echo "m3[i,k] = m1[i,j] * m2[j,i] =\n", m3
+  v3 = 0
+  echo "\nThese should fuse completely (check the compiler output!)"
+  v2 = v1 + 0.1
+  v3 += v2 * m1
+  echo "v2 = v1 + 0.1 = ", v2
+  echo "v3 += v2 * m1 = ", v3

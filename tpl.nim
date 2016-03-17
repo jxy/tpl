@@ -480,8 +480,10 @@ proc reAssembleBinOp(n, lhs, rhs: NimNode): NimNode =
   elif n.kind in CallNodes and n.len == 3:
     result = n.copyNimNode.add(n[0])
     for s in [lhs, rhs]:
-      if s.kind == nnkPar: result.add s
-      else: result.add s.newPar
+      if s.kind in AtomicNodes + {nnkPar}:
+        result.add s
+      else:
+        result.add s.newPar
   else:
     error "Don't know how to reassemble binary op for\n" &
       n.repr & "\nfrom lhs\n" & lhs.repr & "\nand rhs\n" & rhs.repr
@@ -627,17 +629,10 @@ proc contractDummyU(n: NimNode): NimNode =
       else:
         # Special rebindings here to force type check the stmt again.
         if nn.kind in CallNodes:
-          if $nn[0] == "[]":
-            nn[0] = bindsym"[]" # We need to index with different index types.
-          # We may or may not need the following 5 lines.
-          # for i in 1..<nn.len:
-          #   if nn[i].kind == nnkHiddenDeref:
-          #     nn[i] = nn[i][0].newPar
-          #   elif nn[i].kind != nnkPar:
-          #     nn[i] = nn[i].newPar
-          nn = nn.newPar
-        elif nn.kind == nnkHiddenDeref:
-          nn = if nn[0].kind == nnkPar: nn[0] else: nn[0].newPar
+          for i in 1..<nn.len:
+            if nn[i].kind notin AtomicNodes + {nnkPar}:
+              nn[i] = nn[i].newPar
+          nn = nn.rebindIndexing
         result = (nn, ixt)
   proc alltypes(t: ixtree): seqset[NimNode] =
     result.init
@@ -1144,12 +1139,10 @@ macro splittingHelper(n: typed): stmt =
       # if n.kind == nnkInfix and n[0].kind == nnkSym:
       if n.kind in CallNodes:
         # result[0] = ident($result[0])
-        if result[1].kind != nnkPar:
-          result[1] = result[1].newPar # Otherwise fails type check?!
-        # result[2] = result[2].newPar
-      result = getast(splits(result))
-      # for t in splits:
-      #   result = newCall(t, result)
+        for i in 1..<result.len:
+          if result[i].kind notin AtomicNodes + {nnkPar}:
+            result[i] = result[i].newPar
+      result = getast splits result
     # echo "## splittingHelper:g => ", result.treerepr
   # result = bindsym"splitMultiOp".g bindsym"splitRhsSum".g bindsym"splitLhsDuplicate".g n
   result = n.g
@@ -1382,13 +1375,12 @@ macro fusionHelper(n: typed): stmt =
           else:
             forBody.add sndBody
           for j in 0..<forBody.len: # Still need to make it recheck types.
-            if forBody[j].kind in CallNodes and forBody[j][0].kind == nnkSym:
-              # forBody[j][0] = ident($forBody[j][0])
-              if forBody[j][1].kind != nnkPar:
-                forBody[j][1] = forBody[j][1].newPar
-              # for k in 1..<forBody[j].len:
-              #   if forBody[j][k].kind != nnkPar:
-              #     forBody[j][k] = forBody[j][k].newPar
+            var fj = forBody[j]
+            if fj.kind in CallNodes:
+              # fj[0] = ident($fj[0])
+              for k in 1..<fj.len:
+                if fj[k].kind notin AtomicNodes + {nnkPar}:
+                  fj[k] = fj[k].newPar
           forstmt.add forBody.g
           result.add forstmt
           inc i, 2
@@ -1406,10 +1398,13 @@ macro fusionHelper(n: typed): stmt =
         result.add n[j]
       if n[^1].kind in {nnkStmtList, nnkForStmt}:
         result.add n[^1].g
-      elif n[^1].kind in CallNodes:
+      elif n[^1].kind in CallNodes: # Force type recheck.
         result.add n[^1].copy   # We don't change n.
-        if result[^1].len > 1 and result[^1][1].kind != nnkPar:
-          result[^1][1] = result[^1][1].newPar # Another ODD workaround for type mismatch.
+        var rl = result[^1]
+        if rl.len > 1:
+          for k in 1..<rl.len:
+            if rl[k].kind notin AtomicNodes + {nnkPar}:
+              rl[k] = rl[k].newPar
       else:
         result.add n[^1]
     else:
