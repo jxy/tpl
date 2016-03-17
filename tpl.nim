@@ -464,6 +464,10 @@ proc getlhsix(s: seq[dummyTree]): seqset[NimNode] =
   result.init
   for i in 0..<s.len-1: # Every but last belongs to the left hand side.
     result.incl s[i].idx
+proc getrhsix(s: seq[dummyTree]): seqset[NimNode] =
+  result.init
+  if s.len > 0:
+    result.incl s[^1].idx
 proc isAutoSumStmt(n: NimNode): bool =
   result = n.kind == nnkAsgn or (n.kind in CallNodes and $n[0] in autoSumFunctions)
 proc needAutoSum(n: NimNode, t: dummyTree): bool =
@@ -1175,11 +1179,18 @@ proc loopDummy(n: NimNode): NimNode =
   let
     t = n.genDummyTree
     lhsIx = t.branch.getlhsix
+    rhsIx = t.branch.getrhsix
     rhsLocalIx = t.idx - lhsIx
-    otherIx = t.idx - rhsLocalIx
-  # echo "==== n: ", n.treerepr
-  # echo "---- t: ", t.treerepr
-  result = rhsLocalIx.dummyLoopGen otherIx.dummyLoopGen n
+    lhsLocalIx = t.idx - rhsIx
+    commonIx = rhsIx - rhsLocalIx
+  # echo "AllIx: ", t.idx.repr
+  # echo "lhsIx: ", lhsIx.repr
+  # echo "rhsIx: ", rhsIx.repr
+  # echo "lhsLocalIx: ", lhsLocalIx.repr
+  # echo "rhsLocalIx: ", rhsLocalIx.repr
+  # echo "commonIx: ", commonIx.repr
+  result =
+    rhsLocalIx.dummyLoopGen commonIx.dummyLoopGen lhsLocalIx.dummyLoopGen n
 macro looping(n: typed): stmt =
   dbg "looping <= ", n, TPLDebug.flow
   # hint ">>>> looping: <= " & n.treerepr
