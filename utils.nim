@@ -4,24 +4,29 @@ import strutils
 iterator pairs*(n: NimNode): (int, NimNode) =
   for i in 0..<n.len:
     yield(i, n[i])
-proc rebindIndexing*(n: NimNode): NimNode =
-  if $n[0] == "[]":
-    result = newNimNode(nnkBracketExpr)
-    for i in 1..<n.len:
-      # if n[i].kind in {nnkHiddenDeref, nnkHiddenAddr}:
-      #   result.add n[i][0]
-      # else:
-        result.add n[i]
-  elif $n[0] == "[]=":
-    result = newNimNode(nnkBracketExpr)
-    for i in 1..<n.len-1:
-      # if n[i].kind in {nnkHiddenDeref, nnkHiddenAddr}:
-      #   result.add n[i][0]
-      # else:
-        result.add n[i]
-    result = newAssignment(result, n[^1])
-  else:
-    result = n
+proc unwrap(n: NimNode): NimNode =
+  result = n
+  while result.kind in {nnkPar, nnkHiddenDeref, nnkHiddenAddr}:
+    result = result[0]
+template rebindIndexing*(n: expr): stmt =
+  var nn = n
+  if $nn[0] == "[]":
+    var brk = newNimNode(nnkBracketExpr)
+    for i in 1..<nn.len:
+      brk.add unwrap(nn[i])
+    n = brk
+  elif $nn[0] == "[]=":
+    var brk = newNimNode(nnkBracketExpr)
+    for i in 1..<nn.len-1:
+      brk.add unwrap(nn[i])
+    n = newAssignment(brk, nn[nn.len-1])
+
+template callNodesWrap*(n: expr): stmt =
+  let nn = n
+  if nn.len > 1:
+    for i in 1..<nn.len:
+      if nn[i].kind notin AtomicNodes + {nnkPar}:
+        n[i] = nn[i].newPar
 
 proc replace*(n: NimNode, i: NimNode, j: NimNode): NimNode =
   # echo "\n>>>> replace"
@@ -84,18 +89,11 @@ proc convert*(n: NimNode, i: NimNode, j: NimNode): NimNode =
           else:
             result.nn[i] = nnn
       if result.nn.kind in CallNodes:
-        for i in 1..<result.nn.len:
-          if result.nn[i].kind notin AtomicNodes + {nnkPar}:
-            result.nn[i] = result.nn[i].newPar
-            # echo "#### ", result.nn[i].lisprepr
-        #   if result.nn[i].kind in {nnkHiddenDeref, nnkHiddenAddr}:
-        #     result.nn[i] = if result.nn[i][0].kind == nnkPar: result.nn[i][0] else: result.nn[i][0].newPar
-        #   elif result.nn[i].kind in {nnkPrefix, nnkInfix, nnkCall, nnkIfExpr}:
-        #     result.nn[i] = result.nn[i].newPar
+        result.nn.callNodesWrap
         # Make every sym ident would break generic function definitions.
         # result.nn[0] = ident($result.nn[0].symbol)
         # Limiting to indexing op only, may break with other replacment.
-        result.nn = result.nn.rebindIndexing
+        result.nn.rebindIndexing
       # elif result.nn.kind in {nnkHiddenDeref, nnkHiddenAddr}:
       #   result.nn = if result.nn[0].kind == nnkPar: result.nn[0] else: result.nn[0].newPar
       elif result.nn.kind == nnkConv:

@@ -126,29 +126,6 @@ macro Tensor*(element: typed, index: openarray[typed]): expr =
   for i in index:
     container.addDot(i, "lo", "hi")
   result = genTensorType(container, element, index)
-proc isTensorType(n: NimNode): bool =
-  result = $n.gettype in ["gT1", "gT2"]
-  # Using sametype does not work here?!
-  # result = n.gettype.sametype gT1.gettype
-  # result = result or n.gettype.sametype gT2.gettype
-template rank(x: gT1): int = 1
-template rank(x: gT2): int = 2
-
-macro genConv(ty: typed, el: typed): untyped =
-  template defConv(convName, ta, tb: untyped): stmt =
-    converter convName*(x: ta): tb {.nodecl.} = discard
-    converter convName*(x: tb): ta {.nodecl.} = discard
-  let conv = "__CONV_" & ty.dummyStr & "__2__" & el.dummyStr
-  result = getast(defConv(ident(conv), ty, el))
-  # echo "<<<< genConv => ", result.repr
-template prepareAutoIndex1*[D;V;id1,lo1,hi1:static[int]](t: typedesc[gT1[D,V,id1,lo1,hi1]]): stmt =
-  genConv(t, V)
-template prepareAutoIndex1*[D;V;id1,lo1,hi1,id2,lo2,hi2:static[int]](t: typedesc[gT2[D,V,id1,lo1,hi1,id2,lo2,hi2]]): stmt =
-  genConv(t, V)
-macro prepareAutoIndex*(ts: varargs[typed]): stmt =
-  result = newStmtList()
-  for t in ts:
-    result.add newCall(bindsym"prepareAutoIndex1", t)
 
 # indexing
 proc `[]`*[D,V;id1,lo1,hi1:static[int]](x: gT1[D,V,id1,lo1,hi1], i1: gTindex[id1,lo1,hi1]): V {.inline.} =
@@ -334,10 +311,12 @@ macro autoIndexAsgn[T](lhs: T, rhs: T): stmt =
 
 ####################
 # tensor ops
+proc newTensorAssign(lhs, rhs: NimNode): NimNode =
+  result = infix(lhs, "+=", rhs) # Assume new tensors are initialized with 0.
 macro defTensorEq(lhs: untyped, rhs: typed): stmt =
   dbg "defTensorEq:lhs: ", lhs, TPLDebug.detail
   dbg "defTensorEq:rhs: ", rhs, TPLDebug.detail
-  result = newStmtList().add(newNimNode(nnkVarSection), newAssignment(lhs, rhs))
+  result = newStmtList().add(newNimNode(nnkVarSection), newTensorAssign(lhs, rhs))
   let rhsT = newCall(bindsym"type", rhs)
   if lhs.kind == nnkBracketExpr and lhs.len > 0:
     var tensorCall = newCall(bindsym"Tensor", rhsT, newNimNode(nnkBracket))
@@ -436,13 +415,6 @@ proc genDummyTree(n: NimNode): dummyTree =
         result.branch[i] = t
   result = n.g
   # echo "<<<< genDummytree =>\n", result.treerepr
-proc isVarArg(n: NimNode): bool =
-  n.kind == nnkBracketExpr and $n[0].symbol == "var"
-proc localDummyAt(ds: seq[dummyTree], i: int): seqset[NimNode] =
-  result = ds[i].idx
-  for n in 0..<ds.len:
-    if n != i:
-      result.excl ds[n].idx
 
 const autoSumFunctions = ["=", "+=", "-=", "*=", "/=", "[]="]
 const autoSumFunctionNoBracket = ["=", "+=", "-=", "*=", "/="]
@@ -478,12 +450,8 @@ proc reAssembleBinOp(n, lhs, rhs: NimNode): NimNode =
      (n.kind in CallNodes and $n[0] == "[]=" and lhs.kind == nnkBracketExpr):
     result = newAssignment(lhs, rhs)
   elif n.kind in CallNodes and n.len == 3:
-    result = n.copyNimNode.add(n[0])
-    for s in [lhs, rhs]:
-      if s.kind in AtomicNodes + {nnkPar}:
-        result.add s
-      else:
-        result.add s.newPar
+    result = n.copyNimNode.add(n[0], lhs, rhs)
+    result.callNodesWrap
   else:
     error "Don't know how to reassemble binary op for\n" &
       n.repr & "\nfrom lhs\n" & lhs.repr & "\nand rhs\n" & rhs.repr
@@ -629,10 +597,8 @@ proc contractDummyU(n: NimNode): NimNode =
       else:
         # Special rebindings here to force type check the stmt again.
         if nn.kind in CallNodes:
-          for i in 1..<nn.len:
-            if nn[i].kind notin AtomicNodes + {nnkPar}:
-              nn[i] = nn[i].newPar
-          nn = nn.rebindIndexing
+          nn.callNodesWrap
+          nn.rebindIndexing
         result = (nn, ixt)
   proc alltypes(t: ixtree): seqset[NimNode] =
     result.init
@@ -995,7 +961,7 @@ macro splitLhsDuplicate(n: typed): stmt =
       else:
         let (tt, def) = temporaryTensor(commonIx, rhs)
         result = newStmtList().add(def, n.reAssembleBinOp(lhs, tt))
-  dbg "splitLhsduplicate => ", result, TPLDebug.detail
+  dbg "splitLhsDuplicate => ", result, TPLDebug.detail
   # hint "<<<< splitLhsDuplicate => " & result.treerepr
 macro splitRhsSum(n: typed): stmt =
   dbg "splitRhsSum <= ", n, TPLDebug.flow
@@ -1142,9 +1108,7 @@ macro splittingHelper(n: typed): stmt =
       # if n.kind == nnkInfix and n[0].kind == nnkSym:
       if n.kind in CallNodes:
         # result[0] = ident($result[0])
-        for i in 1..<result.len:
-          if result[i].kind notin AtomicNodes + {nnkPar}:
-            result[i] = result[i].newPar
+        result.callNodesWrap
       result = getast splits result
     # echo "## splittingHelper:g => ", result.treerepr
   # result = bindsym"splitMultiOp".g bindsym"splitRhsSum".g bindsym"splitLhsDuplicate".g n
@@ -1224,12 +1188,16 @@ macro cleanup(n: typed): stmt =
       result = newStmtList()
       for c in n:
         # Skip varsection with the magic string.
-        if c.kind != nnkVarSection or $c[0][0] != "__TPL__INTERNAL_REMOVE__":
-          if c.kind == nnkStmtList: # Flatten out nested stmtlist.
-            for cc in c.g:
-              result.add cc
-          else:
-            result.add c.g
+        if c.kind == nnkVarSection and
+           $c[0][0] == "__TPL__INTERNAL_REMOVE__":
+          continue
+        if c.kind == nnkDiscardStmt:
+          continue
+        if c.kind == nnkStmtList: # Flatten out nested stmtlist.
+          for cc in c.g:
+            result.add cc
+        else:
+          result.add c.g
     elif n.kind == nnkBlockStmt:
       result = newBlockstmt(n[0], n[1].g)
     elif n.kind in RoutineNodes:
@@ -1257,17 +1225,13 @@ proc collectTensors(n: NimNode): (seqset[NimNode], seqset[NimNode]) =
     for x in b:
       vl.incl x
   if n.kind == nnkAsgn:
-    var
-      nn = if n[0].kind == nnkHiddenDeref: n[0][0] else: n[0]
-    # if nn.kind in CallNodes and $nn[0] == "[]":
-    #   var t = newNimNode(nnkBracketExpr)
-    #   for i in 0..<nn.len:
-    #     t.add nn[i]
-    #   lv.add t
-    if nn.kind == nnkSym:
-      lv.incl newNimNode(nnkBracketExpr).add nn
-    else:
-      error "Don't know how to extract tensors from: " & n.treerepr
+    var nn = n[0]
+    while nn.kind != nnkSym:
+      if nn.kind notin {nnkBracketExpr, nnkPar, nnkHiddenDeref, nnkHiddenAddr}:
+        error "Don't know how to extract tensors from: " & nn.treerepr & "\nin: " & n.treerepr
+      else:
+        nn = nn[0]
+    lv.incl newNimNode(nnkBracketExpr).add nn
     recurseAdd n[1]
   elif n.kind in CallNodes:
     if n[0].kind == nnkSym:
@@ -1378,17 +1342,16 @@ macro fusionHelper(n: typed): stmt =
           else:
             forBody.add sndBody
           for j in 0..<forBody.len: # Still need to make it recheck types.
-            var fj = forBody[j]
-            if fj.kind in CallNodes:
-              # fj[0] = ident($fj[0])
-              for k in 1..<fj.len:
-                if fj[k].kind notin AtomicNodes + {nnkPar}:
-                  fj[k] = fj[k].newPar
+            if forBody[j].kind in CallNodes:
+              forBody[j].callNodesWrap
           forstmt.add forBody.g
           result.add forstmt
           inc i, 2
         else:
           result.add fst.g
+          if result[^1].kind in CallNodes: # Force type recheck.
+            result[^1] = result[^1].copy
+            result[^1].callNodesWrap
           inc i
     elif n.kind == nnkBlockStmt:
       result = newBlockstmt(n[0], n[1].g)
@@ -1399,17 +1362,11 @@ macro fusionHelper(n: typed): stmt =
       result = newNimNode(nnkForStmt)
       for j in 0..<n.len-1:
         result.add n[j]
-      if n[^1].kind in {nnkStmtList, nnkForStmt}:
-        result.add n[^1].g
-      elif n[^1].kind in CallNodes: # Force type recheck.
+      if n[^1].kind in CallNodes: # Force type recheck.
         result.add n[^1].copy   # We don't change n.
-        var rl = result[^1]
-        if rl.len > 1:
-          for k in 1..<rl.len:
-            if rl[k].kind notin AtomicNodes + {nnkPar}:
-              rl[k] = rl[k].newPar
+        result[^1].callNodesWrap
       else:
-        result.add n[^1]
+        result.add n[^1].g
     else:
       result = n
     # echo "<<<< fusion:g => ", result.repr
@@ -1428,8 +1385,9 @@ macro withDbgLevel(verbose: static[TPLDebug], n: untyped): stmt =
       TPLDebugLevel = OldLvl
   result = getast g(verbose, n)
 template tensorOpsHelper(v: TPLDebug, n: untyped): stmt =
-  withDbgLevel TPLDebug(v):
-    showCallResult fusion cleanup looping autoSum splitting convertDummyU reAssign n
+  cleanup:
+    withDbgLevel TPLDebug(v):
+      showCallResult fusion cleanup looping autoSum splitting convertDummyU reAssign n
 proc tensorOpsWithDbgLevel(v: TPLDebug, n: NimNode): NimNode =
   if n.kind in RoutineNodes:
     result = n
