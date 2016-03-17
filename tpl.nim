@@ -334,9 +334,9 @@ macro autoIndexAsgn[T](lhs: T, rhs: T): stmt =
 
 ####################
 # tensor ops
-macro temporaryTensorEq(lhs: untyped, rhs: typed): stmt =
-  dbg "temporaryTensorEq:lhs: ", lhs, TPLDebug.detail
-  dbg "temporaryTensorEq:rhs: ", rhs, TPLDebug.detail
+macro defTensorEq(lhs: untyped, rhs: typed): stmt =
+  dbg "defTensorEq:lhs: ", lhs, TPLDebug.detail
+  dbg "defTensorEq:rhs: ", rhs, TPLDebug.detail
   result = newStmtList().add(newNimNode(nnkVarSection), newAssignment(lhs, rhs))
   let rhsT = newCall(bindsym"type", rhs)
   if lhs.kind == nnkBracketExpr and lhs.len > 0:
@@ -938,6 +938,13 @@ proc indexedTensor(m: NimNode): NimNode =
   else:                         # What if a HiddenAddr?
     result = newEmptyNode()
 var temporaryTensorId {.compileTime.} = 0
+proc temporaryTensor(ix: seqset[NimNode], rhs: NimNode): (NimNode, NimNode) =
+  # Returns a tensor of BracketExpr[T,ix...] and the definition.
+  var tt = newNimNode(nnkBracketExpr).add gensym(nskVar, "__T" & $temporaryTensorId)
+  inc temporaryTensorId
+  for i in ix:
+    tt.add i
+  result = (tt, newCall(bindsym"defTensorEq", tt, rhs))
 macro splitLhsDuplicate(n: typed): stmt =
   dbg "splitLhsDuplicate <= ", n, TPLDebug.flow
   # hint ">>>> splitLhsDuplicate <= " & n.treerepr
@@ -986,12 +993,8 @@ macro splitLhsDuplicate(n: typed): stmt =
         for c in lhsTail:
           result.add c.newAssignment stmtHead.getlhs
       else:
-        var tt = newNimNode(nnkBracketExpr).add ident("__T" & $temporaryTensorId)
-        inc temporaryTensorId
-        for i in commonIx:
-          tt.add i
-        result = newStmtList().add(newCall(bindsym"temporaryTensorEq", tt, rhs))
-        result.add n.reAssembleBinOp(lhs, tt)
+        let (tt, def) = temporaryTensor(commonIx, rhs)
+        result = newStmtList().add(def, n.reAssembleBinOp(lhs, tt))
   dbg "splitLhsduplicate => ", result, TPLDebug.detail
   # hint "<<<< splitLhsDuplicate => " & result.treerepr
 macro splitRhsSum(n: typed): stmt =
