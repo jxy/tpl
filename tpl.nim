@@ -36,7 +36,7 @@ macro showCallResult(n: untyped): stmt =
       result.add n[0]
       result.add n[1].g
       result = newCall(bindsym"showOutput", newlit($n[0] & " => "), result)
-    elif n.kind == nnkStmtList and n.len == 1 and n[0].kind in CallNodes:
+    elif n.kind in StmtNodes and n.len == 1 and n[0].kind in CallNodes:
       result = n[0].g
     else:
       result = n
@@ -474,7 +474,7 @@ proc rebindAssignment(n: NimNode): NimNode =
 macro reAssign(n: untyped): stmt =
   dbg "reAssign <= ", n, TPLDebug.flow
   proc g(n: NimNode): NimNode =
-    if n.kind == nnkStmtList:
+    if n.kind in StmtNodes:
       result = newStmtList()
       for i in 0..<n.len:
         result.add n[i].g
@@ -866,7 +866,7 @@ proc contractDummyU(n: NimNode): NimNode =
 macro convertDummyU(n: typed): stmt =
   dbg "convertDummyU <= ", n, TPLDebug.flow
   proc g(n: NimNode): NimNode =
-    if n.kind == nnkStmtList:
+    if n.kind in StmtNodes:
       result = newStmtList()
       for i in 0..<n.len:
         result.add n[i].g
@@ -1203,7 +1203,7 @@ proc addRequiredTemporary(n: NimNode): NimNode =
 macro requireTemporary(n: typed): stmt =
   dbg "requireTemporary <= ", n, TPLDebug.flow
   proc g(n: NimNode): NimNode =
-    if n.kind == nnkStmtList:
+    if n.kind in StmtNodes:
       result = newStmtList()
       for i in 0..<n.len:
         result.add n[i].g
@@ -1270,7 +1270,7 @@ macro splittingHelper(n: typed): stmt =
     splitRhsSum splitLhsDuplicate n
   proc g(n: NimNode): NimNode =
     # echo "\n## splittingHelper:g <= ", n.treerepr
-    if n.kind == nnkStmtList:
+    if n.kind in StmtNodes:
       result = newStmtList()
       for i in 0..<n.len:
         result.add n[i].g
@@ -1298,7 +1298,7 @@ macro autoSum(n: typed): stmt =
   dbg "autoSum <= ", n, TPLDebug.flow
   # hint ">>>> autoSum <= " & n.treerepr
   proc g(n: NimNode): NimNode =
-    if n.kind == nnkStmtList:
+    if n.kind in StmtNodes:
       result = newStmtList()
       for i in 0..<n.len:
         result.add n[i].g
@@ -1334,7 +1334,7 @@ macro looping(n: typed): stmt =
   # hint ">>>> looping: <= " & n.treerepr
   proc g(n: NimNode): NimNode =
     # echo "\n>>>> looping:g <= ", n.repr
-    if n.kind == nnkStmtList:
+    if n.kind in StmtNodes:
       result = newStmtList()
       for i in 0..<n.len:
         result.add n[i].g
@@ -1362,7 +1362,7 @@ macro cleanup(n: typed): stmt =
   dbg "cleanup <= ", n, TPLDebug.flow
   proc g(n: NimNode): NimNode =
     # echo "\n>>>> cleanup:g <= ", n.treerepr
-    if n.kind == nnkStmtList:
+    if n.kind in StmtNodes:
       result = newStmtList()
       for c in n:
         # Skip varsection with the magic string.
@@ -1371,7 +1371,7 @@ macro cleanup(n: typed): stmt =
           continue
         if c.kind == nnkDiscardStmt:
           continue
-        if c.kind == nnkStmtList: # Flatten out nested stmtlist.
+        if c.kind in StmtNodes: # Flatten out nested stmtlist.
           for cc in c.g:
             result.add cc
         else:
@@ -1471,7 +1471,7 @@ macro fusionHelper(n: typed): stmt =
   # hint ">>>> fusion <= " & n.treerepr
   proc g(n: NimNode): NimNode =
     # echo "#### fusion:g <= ", n.repr
-    if n.kind == nnkStmtList:
+    if n.kind in StmtNodes:
       result = newStmtList()
       var i = 0
       while i < n.len:
@@ -1488,12 +1488,12 @@ macro fusionHelper(n: typed): stmt =
           for j in 0..<snd.len-2: # All loop variables.
             sndBody = sndBody.replace(snd[j], fst[j])
           var forBody = newStmtList()
-          if fst[^1].kind == nnkStmtList:
+          if fst[^1].kind in StmtNodes:
             for c in fst[^1]:
               forBody.add c.copy # Require this copy to avoid illegal storage access.
           else:
             forBody.add fst[^1]
-          if sndBody.kind == nnkStmtList:
+          if sndBody.kind in StmtNodes:
             for c in sndBody:
               forBody.add c.copy # Require this copy to avoid illegal storage access.
           else:

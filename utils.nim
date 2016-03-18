@@ -1,6 +1,8 @@
 import macros
 import strutils
 
+const StmtNodes* = {nnkStmtList, nnkStmtListExpr}
+
 iterator pairs*(n: NimNode): (int, NimNode) =
   for i in 0..<n.len:
     yield(i, n[i])
