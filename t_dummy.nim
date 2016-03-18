@@ -1,4 +1,5 @@
 import math
+import unittest
 import tpl
 
 type
@@ -7,7 +8,7 @@ type
 prepareDummy(Spin)
 block:
   echo "\n* test index types"
-  assert(not(Spin is Color), "Spin shouldn't be the same as Color")
+  check(Spin isnot Color)
   var
     s: Spin
     # The following 3 are syntactically equivalent
@@ -123,7 +124,7 @@ block:
     var v1,v2,v3: type(y)
     v1 = m*y
     v2[a] = I[a,b]*x[b]*v1[b]
-    assert X[a,b] == v2[b]
+    check(X[a,b] == v2[b])
     y[a] = m[a,b] * x[b] + x[a] * I[c,c]
     echo "  y_a = m_ab x_b + x_a I_cc = ", y
     var s1: type(I[c,c])
@@ -131,7 +132,7 @@ block:
     v1 = m*x
     v2 = s1*x
     v3 = v1 + v2
-    assert y[a] == v3[a]
+    check(y[a] == v3[a])
 
 block:
   echo "\n* test nested"

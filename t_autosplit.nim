@@ -1,3 +1,4 @@
+import unittest
 import tpl
 
 type
@@ -33,29 +34,29 @@ tensorOps:
   echo "sv2 = sm * sv + sv = ", sv2
   sv3 = sm * sv
   sv3 += sv
-  assert sv3[i] == sv2[i]
+  check(sv3[i] == sv2[i])
   csv = sm * sv + sv
   echo "csv = sm * sv + sv =\n", csv
-  assert csv[i] == sv2[i]
+  check(csv[i] == sv2[i])
   sv2 = sv + sv * sm
   echo "sv2 = sv + sv * sm = ", sv2
   sv3 = sv * sm
   sv3 += sv
-  assert sv2[i] == sv3[i]
+  check(sv2[i] == sv3[i])
   sv2 = 0
   sv2 += sv + sv * sm
   echo "sv2 = 0; sv2 += sv + sv * sm = ", sv2
-  assert sv2[i] == sv3[i]
+  check(sv2[i] == sv3[i])
   sv2 = sv * sm + sv * sm
   sv3 = 2.0 * sv * sm
   echo "sv2 = sv * sm + sv * sm = ", sv2
   echo "sv3 = 2.0 * sv * sm = ", sv3
-  assert sv2[i] == sv3[i]
+  check(sv2[i] == sv3[i])
   x = sv*sm*sv
   echo "x = sv*sm*sv = ", x
   sv2 = sv*sm
   y = sv2*sv
-  assert x == y
+  check(x == y)
   sv = sv*sm
   echo "sv = sv*sm = ", sv
-  assert sv[i] == sv2[i]
+  check(sv[i] == sv2[i])

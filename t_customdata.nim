@@ -1,5 +1,6 @@
-import tpl
+import unittest
 import strutils
+import tpl
 
 const
   nc = 3
@@ -28,8 +29,8 @@ var
 newseq(d.data, nc*ns)           # direct .data access
 tensorOps:
   d[a,i] = 10*a+i
-  assert d.data == @[0, 10, 20, 1, 11, 21, 2, 12, 22, 3, 13, 23]
+  check(d.data == @[0, 10, 20, 1, 11, 21, 2, 12, 22, 3, 13, 23])
   echo d
   d[a,i] += 1000*i+100*a
-  assert d.data == @[0, 110, 220, 1001, 1111, 1221, 2002, 2112, 2222, 3003, 3113, 3223]
+  check(d.data == @[0, 110, 220, 1001, 1111, 1221, 2002, 2112, 2222, 3003, 3113, 3223])
   echo d

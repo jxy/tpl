@@ -60,8 +60,8 @@ tensorOps:
   echo "sv2 += sv*sm = ", sv2
   cv = scv * sv
   echo "cv = scv*sv = ", cv
-  # x = sv*sm*sv
-  # echo "x = sv*sm*sv = ", x
+  x = sv*sm*sv
+  echo "x = sv*sm*sv = ", x
   sv2 = sv
   echo "naive asssignment: sv2 = sv = ", sv2
   sv = 2.0*sv
