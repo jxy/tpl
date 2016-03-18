@@ -219,9 +219,7 @@ macro prepareDummy*(d: varargs[typed]): stmt =
     converter cn*(x: gTindexDummyU): t {.nodecl.} = discard
   result = newStmtList()
   for i in d:
-    let
-      id = newCall(bindsym"Dummy", i)
-      conv = "__CONV_DummyU__2__" & i.dummyStr
+    let conv = "__CONV_DummyU__2__" & i.dummyStr
     result.add getast(convDummyU(ident(conv), i))
 
 template `[]`*[D,V;id1,lo1,hi1,id2,lo2,hi2:static[int]](x: gT2[D,V,id1,lo1,hi1,id2,lo2,hi2], i1: gTindexDummy[id1,lo1,hi1]): expr =
@@ -312,21 +310,33 @@ macro autoIndexAsgn[T](lhs: T, rhs: T): stmt =
 ####################
 # tensor ops
 proc newTensorAssign(lhs, rhs: NimNode): NimNode =
-  result = infix(lhs, "+=", rhs) # Assume new tensors are initialized with 0.
+  # Use `+=`, assuming new tensors are initialized with 0.
+  if lhs.len == 1:
+    result = infix(lhs[0], "+=", rhs)
+  elif lhs.len > 1:
+    result = infix(lhs, "+=", rhs)
+  else:
+    error "Don't know how to assign rhs: " & rhs.treerepr & " to lhs: " & lhs.treerepr
 macro defTensorEq(lhs: untyped, rhs: typed): stmt =
   dbg "defTensorEq:lhs: ", lhs, TPLDebug.detail
   dbg "defTensorEq:rhs: ", rhs, TPLDebug.detail
   result = newStmtList().add(newNimNode(nnkVarSection), newTensorAssign(lhs, rhs))
   let rhsT = newCall(bindsym"type", rhs)
-  if lhs.kind == nnkBracketExpr and lhs.len > 0:
-    var tensorCall = newCall(bindsym"Tensor", rhsT, newNimNode(nnkBracket))
-    for i in 1..<lhs.len:
-      tensorCall[2].add newCall(bindsym"type", lhs[i])
-    result[0].add newIdentDefs(lhs[0], tensorCall)
-  elif lhs.kind == nnkIdent:
+  if lhs.kind == nnkBracketExpr:
+    if lhs.len > 1:
+      var tensorCall = newCall(bindsym"Tensor", rhsT, newNimNode(nnkBracket))
+      for i in 1..<lhs.len:
+        tensorCall[2].add newCall(bindsym"type", lhs[i])
+      result[0].add newIdentDefs(lhs[0], tensorCall)
+    elif lhs.len == 1:
+      result[0].add newIdentDefs(lhs[0], rhsT)
+    else:
+      error "Don't know how to create temporaryTensor from lhs: '" & lhs.repr & "' and rhs: '" & rhs.repr & "'"
+  elif lhs.kind == nnkIdent or lhs.kind == nnkSym:
     result[0].add newIdentDefs(lhs, rhsT)
   else:
     error "Don't know how to create temporaryTensor from lhs: '" & lhs.repr & "' and rhs: '" & rhs.repr & "'"
+  dbg "defTensorEq:result => ", result, TPLDebug.detail
 
 macro staticforbody(i: untyped, j: int, t: untyped, n: untyped): untyped =
   # echo "\n>>>> staticfor"
@@ -905,12 +915,16 @@ proc indexedTensor(m: NimNode): NimNode =
     result = newEmptyNode()
 var temporaryTensorId {.compileTime.} = 0
 proc temporaryTensor(ix: seqset[NimNode], rhs: NimNode): (NimNode, NimNode) =
-  # Returns a tensor of BracketExpr[T,ix...] and the definition.
+  # Returns a tensor of BracketExpr[T,ix...] or a scalar of
+  # nnkSym, and the definition.
   var tt = newNimNode(nnkBracketExpr).add gensym(nskVar, "__T" & $temporaryTensorId)
   inc temporaryTensorId
-  for i in ix:
-    tt.add i
-  result = (tt, newCall(bindsym"defTensorEq", tt, rhs))
+  if ix.len > 0:
+    for i in ix:
+      tt.add i
+    result = (tt, newCall(bindsym"defTensorEq", tt, rhs))
+  else:
+    result = (tt[0], newCall(bindsym"defTensorEq", tt, rhs))
 macro splitLhsDuplicate(n: typed): stmt =
   dbg "splitLhsDuplicate <= ", n, TPLDebug.flow
   # hint ">>>> splitLhsDuplicate <= " & n.treerepr
@@ -981,8 +995,6 @@ macro splitRhsSum(n: typed): stmt =
       lhsIx = t.branch.getlhsix
       rhs = n[^1]
       rhsT = t.branch[^1]
-      rhsIx = rhsT.idx
-      lhsLocalIx = t.idx - rhsIx
       rhsLocalIx = t.idx - lhsIx
       rhsOp = if rhs.kind in CallNodes: $rhs[0] else: ""
     if rhs.kind in CallNodes and rhsOp in autoSumOps:
@@ -1021,9 +1033,32 @@ macro splitRhsSum(n: typed): stmt =
           lopLocalIx = rhsLocalIx - ropIx
           ropLocalIx = rhsLocalIx - lopIx
         if lopLocalIx.len > 0:  # Hit ROP in the next round of recursion.
-          error "not implemented for lopLocalIx.len > 0.  Received: " & n.repr
+          result = newStmtList()
+          if (n.kind == nnkAsgn or fun == "[]=") and lopIx in lhsIx: # We reuse the lhs.
+            result.add(
+              n.reAssembleBinOp(lhs, lop),
+              infix(lhs, rhsOp & "=", rop)
+            )
+          else:
+            let (tt, def) = temporaryTensor(lopIx - lopLocalIx, lop)
+            result.add(
+              def,
+              n.reAssembleBinOp(lhs, rhs.reAssembleBinOp(tt, rop))
+            )
         elif ropLocalIx.len > 0: # Similar to lopLocalIx.len > 0, but we honor order for "*" and "/".
-          error "not implemented for ropLocalIx.len > 0.  Received: " & n.repr
+          result = newStmtList()
+          if (n.kind == nnkAsgn or fun == "[]=") and ropIx in lhsIx: # We reuse the lhs.
+            result.add n.reAssembleBinOp(lhs, rop)
+            if rhsOp in ["+", "-"]:
+              result.add infix(lhs, rhsOp & "=", lop)
+            else:               # Honor the order if not + or -.
+              result.add n.reAssembleBinOp(lhs, rhs.reAssembleBinOp(lop, lhs))
+          else:
+            let (tt, def) = temporaryTensor(ropIx - ropLocalIx, rop)
+            result.add(
+              def,
+              n.reAssembleBinOp(lhs, rhs.reAssembleBinOp(lop, tt))
+            )
         else:                   # No local index for both operands
           result = n
       else:
@@ -1033,11 +1068,155 @@ macro splitRhsSum(n: typed): stmt =
   else:
     result = n
   # hint "<<<< splitRhsSum => " & result.treerepr
-macro splitMultiOp(n: typed): stmt =
-  dbg "splitMultiOp <= ", n, TPLDebug.flow
-  # echo "\n>>>> splitMultiOp <= ", n.repr
-  result = n
-  # echo "<<<< splitMultiOp => ", result.repr
+proc collectTensors(n: NimNode): (seqset[NimNode], seqset[NimNode]) =
+  # Returns tensors or scalars in the form of Par(BracketExpr())
+  # in two lists: those used as lvalues and those did not.  Note:
+  # scalars (symbol not indexed with []) are only returned when
+  # they are used as a var (lvalue).
+  # echo "collectTensors:n <= # ", n.lisprepr
+  var lv, vl: seqset[NimNode]
+  lv.init
+  vl.init
+  template recurseAdd(nn: NimNode): stmt =
+    let (a, b) = nn.collectTensors
+    for x in a:
+      lv.incl x
+    for x in b:
+      vl.incl x
+  if n.kind == nnkAsgn:
+    var nn = n[0]
+    while nn.kind != nnkSym:
+      if nn.kind notin {nnkBracketExpr, nnkPar, nnkHiddenDeref, nnkHiddenAddr}:
+        error "Don't know how to extract tensors from: " & nn.treerepr & "\nin: " & n.treerepr
+      else:
+        nn = nn[0]
+    lv.incl newNimNode(nnkBracketExpr).add nn
+    recurseAdd n[0]
+    recurseAdd n[1]
+  elif n.kind in CallNodes:
+    if n[0].kind == nnkSym:
+      # echo "collectTensors:n: ", n.repr
+      var fp = n[0].symbol.getimpl[3]
+      # echo "collectTensors:fp: ", fp.repr
+      # if fp[0].kind == nnkVarTy: # Return a var (lvalue).
+      #   error "what do we do here?"
+      var k = 1
+      for i in 1..<fp.len:            # List of params.
+        let isVarParam = fp[i][^2].kind == nnkVarTy
+        for j in 0..<fp[i].len-2:
+          var nkj = n[k+j]
+          while nkj.kind in {nnkPar, nnkHiddenDeref, nnkHiddenAddr, nnkHiddenStdConv}:
+            nkj = if nkj.kind == nnkHiddenStdConv: nkj[1] else: nkj[0]
+          if nkj.kind in CallNodes + {nnkConv}:
+            # Don't care.
+            recurseAdd nkj
+          elif nkj.kind == nnkSym:
+            var t = newNimNode(nnkBracketExpr)
+            # Add the tensor symbol.
+            t.add nkj
+            # Add indices.
+            if i == 1: # The first argument to [] or []= is the tensor.
+              if $n[0] == "[]":
+                for m in 2..<n.len:
+                  t.add n[m]
+              if $n[0] == "[]=":
+                for m in 2..<n.len-1:
+                  t.add n[m]
+            if isVarParam:
+              lv.incl t
+            else:
+              vl.incl t
+          elif nkj.kind in nnkLiterals or
+               (nkj.kind == nnkBracketExpr and
+                nkj[0].kind == nnkSym and
+                $nkj[0].gettype[0] == "typeDesc"):
+            discard "We don't need to worry about these."
+          else:
+            error "Don't know how to extract tensors from: " &
+              n.treerepr & "\nwith: " & fp.treerepr &
+              "\nlooking at: " & nkj.treerepr
+        k.inc(fp[i].len-2)
+    else:
+      error "Don't know how to extract tensors from: " & n.treerepr
+  elif n.kind == nnkBracketExpr:
+    var t = n.copy
+    if n[0].kind == nnkHiddenAddr and n[0][0].kind == nnkSym:
+      t[0] = t[0][0]
+      lv.incl t
+    elif n[0].kind == nnkSym:
+      vl.incl t
+    elif n[0].kind in CallNodes:
+      var fp = n[0][0].symbol.getimpl[3]
+      if fp[0].kind == nnkVarTy: # Return a var (lvalue).
+        lv.incl t
+      else:
+        vl.incl t
+      for c in n[0]:
+        recurseAdd c
+    else:
+      error "Don't know how to extract tensors from: " & n.treerepr
+  else:
+    for c in n:
+      recurseAdd c
+  result = (lv, vl)
+  # echo "collectTensors:result => ", result.repr
+proc conflictTensor(xs: seqset[NimNode], rs: varargs[seqset[NimNode]]): bool =
+  # Nodes are BracketExpr(T,...).  Returns true if any
+  # tensor/scalar in xs is used in rs with different indices.
+  # WARNING: this check is only reliable when auto summation
+  # statements have been split.
+  proc g(x: NimNode, r: seqset[NimNode]): bool =
+    for y in r:
+      if x[0] == y[0] and x != y:
+        return true
+    return false
+  # echo "conflictTensor:xs: ", xs.repr
+  # echo "conflictTensor:rs: ", rs.repr
+  for x in xs:
+    for r in rs:
+      if x.g r:
+        return true
+  return false
+proc addRequiredTemporary(n: NimNode): NimNode =
+  # Note: the conflict resolution is only reliable when this
+  # transformation is performed after fully split auto summation.
+  # With current implementation, only stmt that isAutoSumStmt are
+  # checked.
+  result = n                    # By default.
+  if n.isAutoSumStmt:
+    let
+      t = n.genDummyTree
+      fun = if n.kind == nnkAsgn: "" else: $n[0]
+      lhs = n.getlhs
+      lhsIx = t.branch.getlhsix
+      rhs = n[^1]
+      rhsT = t.branch[^1]
+      rhsIx = rhsT.idx
+      rhsLocalIx = t.idx - lhsIx
+      commonIx = rhsIx - rhsLocalIx
+      (lhsl, lhsr) = lhs.collectTensors
+      (rhsl, rhsr) = rhs.collectTensors
+    if lhsl.conflictTensor(rhsl, rhsr, lhsr) or
+       (needAutoSum(n, t) and fun in ["*=", "/="]):
+      let (tt, def) = temporaryTensor(commonIx, rhs)
+      result = newStmtList().add(def, n.reAssembleBinOp(lhs, tt))
+macro requireTemporary(n: typed): stmt =
+  dbg "requireTemporary <= ", n, TPLDebug.flow
+  proc g(n: NimNode): NimNode =
+    if n.kind == nnkStmtList:
+      result = newStmtList()
+      for i in 0..<n.len:
+        result.add n[i].g
+    elif n.kind == nnkBlockStmt:
+      result = newBlockstmt(n[0], n[1].g)
+    elif n.kind in RoutineNodes:
+      result = n
+      result[6] = n[6].g
+    elif n.kind in {nnkTypeSection, nnkVarSection, nnkLetSection, nnkConstSection}:
+      result = n
+    else:
+      result = n.addRequiredTemporary
+  result = n.g
 proc accumulateAutoSum(n: NimNode): NimNode =
   # echo "\n>>>> accumulateAutoSum <= ", n.repr
   let t = n.genDummyTree
@@ -1069,7 +1248,7 @@ proc accumulateAutoSum(n: NimNode): NimNode =
       for c in accum:
         result.add c
     elif fun in ["*=", "/="]: # Need a temporary.
-      error "not implemented for *= or /="
+      error "Internal error: requireTemporary should have dealt with this: " & n.treerepr
     else:                     # += or -= need no special treatment.
       result = n
   else:
@@ -1078,8 +1257,7 @@ proc accumulateAutoSum(n: NimNode): NimNode =
 macro fixpoint(i: static[int], m, oldn, n: typed): stmt =
   # Call m repeatedly on n until nothing changes, with each step
   # type checked.  Requires m accepting a typed.
-  # let ii = i.intVal
-  # hint "fixpoint:" & m.repr & ":" & $i & " -----> " & n.treerepr
+  dbg "fixpoint:" & $m & ":" & $i & " => ", n, TPLDebug.flow
   if i == 0 or oldn != n:
     result = newCall(bindsym"fixpoint", newLit(i+1), m, n, newCall(m, n))
   else:
@@ -1087,9 +1265,9 @@ macro fixpoint(i: static[int], m, oldn, n: typed): stmt =
 template fixpointcall(m, n: typed): stmt =
   fixpoint(0, m, newEmptyNode(), n)
 macro splittingHelper(n: typed): stmt =
-  # const splits = @[bindsym"splitLhsDuplicate", bindsym"splitRhsSum", bindsym"splitMultiOp"]
+  # const splits = @[bindsym"splitLhsDuplicate", bindsym"splitRhsSum"]
   template splits(n: untyped): stmt =
-    splitMultiOp splitRhsSum splitLhsDuplicate n
+    splitRhsSum splitLhsDuplicate n
   proc g(n: NimNode): NimNode =
     # echo "\n## splittingHelper:g <= ", n.treerepr
     if n.kind == nnkStmtList:
@@ -1111,7 +1289,7 @@ macro splittingHelper(n: typed): stmt =
         result.callNodesWrap
       result = getast splits result
     # echo "## splittingHelper:g => ", result.treerepr
-  # result = bindsym"splitMultiOp".g bindsym"splitRhsSum".g bindsym"splitLhsDuplicate".g n
+  # result = bindsym"splitReqTemp".g bindsym"splitRhsSum".g bindsym"splitLhsDuplicate".g n
   result = n.g
   # hint "## splittingHelper: " & result.treerepr
 template splitting(n: typed): stmt =
@@ -1152,7 +1330,7 @@ proc loopDummy(n: NimNode): NimNode =
   result =
     rhsLocalIx.dummyLoopGen commonIx.dummyLoopGen lhsLocalIx.dummyLoopGen n
 macro looping(n: typed): stmt =
-  dbg "looping <= ", n, TPLDebug.flow
+  dbg "looping <= ", n, TPLDebug.final
   # hint ">>>> looping: <= " & n.treerepr
   proc g(n: NimNode): NimNode =
     # echo "\n>>>> looping:g <= ", n.repr
@@ -1211,69 +1389,6 @@ macro cleanup(n: typed): stmt =
   result = n.g
   dbg "cleanup => ", result, TPLDebug.detail
 
-proc collectTensors(n: NimNode): (seqset[NimNode], seqset[NimNode]) =
-  # Returns tensors or scalars in the form of Par(BracketExpr())
-  # in two lists: those used as lvalues and those did not.
-  # echo "collectTensors:n <= ", n.repr
-  var lv, vl: seqset[NimNode]
-  lv.init
-  vl.init
-  template recurseAdd(nn): stmt =
-    let (a, b) = nn.collectTensors
-    for x in a:
-      lv.incl x
-    for x in b:
-      vl.incl x
-  if n.kind == nnkAsgn:
-    var nn = n[0]
-    while nn.kind != nnkSym:
-      if nn.kind notin {nnkBracketExpr, nnkPar, nnkHiddenDeref, nnkHiddenAddr}:
-        error "Don't know how to extract tensors from: " & nn.treerepr & "\nin: " & n.treerepr
-      else:
-        nn = nn[0]
-    lv.incl newNimNode(nnkBracketExpr).add nn
-    recurseAdd n[1]
-  elif n.kind in CallNodes:
-    if n[0].kind == nnkSym:
-      # echo "collectTensors:n: ", n.repr
-      var fp = n[0].symbol.getimpl[3]
-      # echo "collectTensors:fp: ", fp.repr
-      # if fp[0].kind == nnkVarTy: # Return a var (lvalue).
-      #   error "what do we do here?"
-      var k = 1
-      for i in 1..<fp.len:            # List of params.
-        if fp[i][^2].kind == nnkVarTy: # Is a var param.
-          for j in 0..<fp[i].len-2:
-            if n[k+j].kind in CallNodes:
-              # Don't care.
-              recurseAdd n[k+j]
-            else:
-              var t = newNimNode(nnkBracketExpr)
-              if n[k+j].kind == nnkSym:
-                t.add n[k+j]
-              elif n[k+j].kind in {nnkHiddenDeref, nnkHiddenAddr} and n[k+j][0].kind == nnkSym:
-                t.add n[k+j][0]
-              else:
-                error "Don't know how to extract tensors from: " & n.treerepr
-              if i == 1:
-                if $n[0] == "[]":
-                  for m in 2..<n.len:
-                    t.add n[m]
-                if $n[0] == "[]=":
-                  for m in 2..<n.len-1:
-                    t.add n[m]
-              lv.incl t
-        else:
-          for j in 0..<fp[i].len-2:
-            recurseAdd n[k+j]
-        k.inc(fp[i].len-2)
-    else:
-      error "Don't know how to extract tensors from: " & n.treerepr
-  else:
-    for c in n:
-      recurseAdd c
-  result = (lv, vl)
-  # echo "collectTensors:result => ", result.repr
 proc conflictTensorIndexing(xs: seqset[NimNode], i: NimNode, ys: seqset[NimNode], j: NimNode): bool =
   # Check each tensor/scalar BracketExpr(T,...) in xs, with the
   # same in ys, return true if the index i in xs and j in ys are
@@ -1297,6 +1412,35 @@ proc conflictTensorIndexing(xs: seqset[NimNode], i: NimNode, ys: seqset[NimNode]
         if result:              # Return if conflict.
           return
 
+proc isFirstAssignedTo(x, n: NimNode): bool =
+  proc g(n: NimNode): int =
+    # 0: Not found; 1: true; -1: false
+    for c in n:
+      if c.kind == nnkSym and c == x:
+        return -1
+      elif c.kind == nnkAsgn:
+        var lhs = c[0]
+        while lhs.kind in {nnkPar, nnkHiddenDeref, nnkHiddenAddr}:
+          lhs = lhs[0]
+        if lhs == x:
+          return 1
+        else:
+          for k in c:
+            let r = k.g
+            if r != 0:
+              return r
+      else:
+        let r = c.g
+        if r != 0:
+          return r
+    return 0
+  let r = n.g
+  if r > 0:
+    result = true
+  elif r < 0:
+    result = false
+  else:
+    error "Didn't find the symbol: " & x.treerepr & "\nin: " & n.treerepr
 proc safeLoopFusion(fst, snd: NimNode): bool =
   # echo "safeLoopFusion:fst <= ", fst.repr
   # echo "safeLoopFusion:snd <= ", snd.repr
@@ -1304,6 +1448,19 @@ proc safeLoopFusion(fst, snd: NimNode): bool =
   var
     (lhs1, rhs1) = fst.collectTensors
     (lhs2, rhs2) = snd.collectTensors
+  # echo "safeLoopFusion:lhs1: ", lhs1.repr
+  # echo "safeLoopFusion:rhs1: ", rhs1.repr
+  # echo "safeLoopFusion:lhs2: ", lhs2.repr
+  # echo "safeLoopFusion:rhs2: ", rhs2.repr
+
+  # Special treatment for scalars.  If a scalar is assigned to at
+  # it's first use in fst, and then used in snd, it does not lead
+  # to conflict.
+  var xs: type(lhs1)
+  xs.init
+  for x in lhs1:
+    if x.len == 1 and x[0].kind == nnkSym and x[0].isFirstAssignedTo fst:
+        xs.incl x
   for i in 0..<fst.len-2:       # All loop variables.
     result = result and not conflictTensorIndexing(lhs1, fst[i], lhs2, snd[i])
     result = result and not conflictTensorIndexing(lhs1, fst[i], rhs2, snd[i])
@@ -1387,7 +1544,8 @@ macro withDbgLevel(verbose: static[TPLDebug], n: untyped): stmt =
 template tensorOpsHelper(v: TPLDebug, n: untyped): stmt =
   cleanup:
     withDbgLevel TPLDebug(v):
-      showCallResult fusion cleanup looping autoSum splitting convertDummyU reAssign n
+      showCallResult:
+        fusion cleanup looping autoSum requireTemporary splitting convertDummyU reAssign n
 proc tensorOpsWithDbgLevel(v: TPLDebug, n: NimNode): NimNode =
   if n.kind in RoutineNodes:
     result = n

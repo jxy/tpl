@@ -13,6 +13,11 @@ proc contains*[T](s: seqset[T], x: T): bool =
     if x == i:
       return true
   return false
+proc contains*[T](s, xs: seqset[T]): bool =
+  for x in xs:
+    if x notin s:
+      return false
+  return true
 proc init*[T](s: var seqset[T]) = newseq(s.s,0)
 proc incl*[T](s: var seqset[T], x: T) =
   if not (x in s):

@@ -4,6 +4,7 @@ import tpl
 type
   Spin = IndexType(1,4)
   Color = IndexType(1,4)
+prepareDummy(Spin)
 block:
   echo "\n* test index types"
   assert(not(Spin is Color), "Spin shouldn't be the same as Color")
@@ -84,7 +85,7 @@ block:
       m[i, Spin.index(1)] = m[i, Spin.index(1)] + 100.0
       echo "  m[",i,",1] = ",m[i,Spin.index(1)]
   echo "\n  * test auto loop dummy"
-  tensorOps:
+  tensorOpsSilent:
     m[a, b] = (a-1.0)*10.0/float(10^b)
     echo "  m =\n", m
     x[a] = if a == 1: 1.0 elif a == 2: 1e-2 elif a == 3: 1e-4 else: 1e-6
@@ -95,10 +96,9 @@ block:
   var
     c, d: a.type
     X, I: Tensor(float, [Spin, Spin])
-  tensorOps:
+  tensorOpsSilent:
     I[a,a] = 1.0
     echo "  I =\n", I
-  tensorOps:
     mn = 0
     mn += I[a,b]*I[b,a]
     echo "  I_ab I_ba = ", mn
@@ -116,13 +116,22 @@ block:
     echo "  X_ab = m_ac I_ca =\n", X
     X[a,b] = m[c,d]
     echo "  X_ab = m_cd =\n", X
-  when false:
     x[a] = 1.0 + m[a,b]*y[b]
-    echo "  x_a = m_ab y_b = ", x
-    # X[a,b] = I[b,c]*x[c]*(m[c,d]*y[d])
-    # echo "  X =\n", X
-    # y[a] = m[a,b] * x[b] + x[a]
-    # echo "  y = ", y
+    echo "  x_a = 1.0 + m_ab y_b = ", x
+    X[a,b] = I[b,c]*x[c]*(m[c,d]*y[d])
+    echo "  X_ab = I_bc x_c (m_cd y_d) =\n", X
+    var v1,v2,v3: type(y)
+    v1 = m*y
+    v2[a] = I[a,b]*x[b]*v1[b]
+    assert X[a,b] == v2[b]
+    y[a] = m[a,b] * x[b] + x[a] * I[c,c]
+    echo "  y_a = m_ab x_b + x_a I_cc = ", y
+    var s1: type(I[c,c])
+    s1 = I
+    v1 = m*x
+    v2 = s1*x
+    v3 = v1 + v2
+    assert y[a] == v3[a]
 
 block:
   echo "\n* test nested"
@@ -135,6 +144,6 @@ block:
     i: inT.Dummy
     mu, nu: Color.Dummy
     m: cm
-  tensorOps:
+  tensorOpsSilent:
     m[mu,nu][i] = 1.0*i*nu + 0.1*mu
     echo m
