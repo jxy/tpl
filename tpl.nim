@@ -717,7 +717,6 @@ proc contractDummyU(n: NimNode): NimNode =
         result.add c.noncontractedIx s
     of ixk0:
       discard
-  proc matchDummyType(t: var ixtree, s: NimNode): replacePairs # Used in following recursions.
   proc contractMul(t: var ixtree, s: NimNode): replacePairs =
     # We contract nearby indices of tensors multiplied together.
     # hint "contractMul:t: " & t.treerepr
@@ -749,6 +748,7 @@ proc contractDummyU(n: NimNode): NimNode =
       result.init
     # hint "contractMul:t: " & t.treerepr
     # hint "contractMul:result: " & $result
+  proc matchDummyType(t: var ixtree, s: NimNode): replacePairs # Used in following recursions.
   proc match2(s: NimNode, lhs, rhs: var ixtree): (replacePairs, seq[NimNode], seq[NimNode]) =
     # Try to match lhs with rhs, returns replacement pairs and
     # non-contracted indices from lhs and rhs.
