@@ -89,31 +89,139 @@ proc `index=`*[id,lo,hi:static[int]](ix:var gTindex[id,lo,hi], n:static[int]) {.
 
 ####################
 # tensor types
-type
-  gT1[D,V;id1,lo1,hi1:static[int]] = object
-    data*: D
-  gT2[D,V;id1,lo1,hi1,id2,lo2,hi2:static[int]] = object
-    data*: D
+# Leave the following, which we generate using macros, commented out for reference.
+#[
+dumptree:
+  type
+    gT1[D,V;id1,lo1,hi1:static[int]] = object
+      data*: D
+    gT2[D,V;id1,lo1,hi1,id2,lo2,hi2:static[int]] = object
+      data*: D
+  template tensorType(container, element: typed, i1: typed): expr =
+    const
+      id1 = i1.id
+      lo1 = i1.lo
+      hi1 = i1.hi
+    gT1[container, element, id1, lo1, hi1]
+  template tensorType(container, element:typed, i1, i2: typed): expr =
+    const
+      id1 = i1.id
+      lo1 = i1.lo
+      hi1 = i1.hi
+      id2 = i2.id
+      lo2 = i2.lo
+      hi2 = i2.hi
+    gT2[container, element, id1, lo1, hi1, id2, lo2, hi2]
+  # indexing
+  proc `[]`*[D,V;id1,lo1,hi1:static[int]](x: gT1[D,V,id1,lo1,hi1], i1: gTindex[id1,lo1,hi1]): V {.inline.} =
+    x.data[i1.i]
+  proc `[]`*[D,V;id1,lo1,hi1:static[int]](x: var gT1[D,V,id1,lo1,hi1], i1: gTindex[id1,lo1,hi1]): var V {.inline.} =
+    x.data[i1.i]
+  proc `[]=`*[D,V;id1,lo1,hi1:static[int]](x: var gT1[D,V,id1,lo1,hi1], i1: gTindex[id1,lo1,hi1], y: V) {.inline.} =
+    x.data[i1.i] = y
+  proc `[]`*[D,V;id1,lo1,hi1,id2,lo2,hi2:static[int]](x: gT2[D,V,id1,lo1,hi1,id2,lo2,hi2], i1: gTindex[id1,lo1,hi1], i2: gTindex[id2,lo2,hi2]): V {.inline.} =
+    x.data[i1.i, i2.i]
+  proc `[]`*[D,V;id1,lo1,hi1,id2,lo2,hi2:static[int]](x: var gT2[D,V,id1,lo1,hi1,id2,lo2,hi2], i1: gTindex[id1,lo1,hi1], i2: gTindex[id2,lo2,hi2]): var V {.inline.} =
+    x.data[i1.i, i2.i]
+  proc `[]=`*[D,V;id1,lo1,hi1,id2,lo2,hi2:static[int]](x: var gT2[D,V,id1,lo1,hi1,id2,lo2,hi2], i1: gTindex[id1,lo1,hi1], i2: gTindex[id2,lo2,hi2], y: V) {.inline.} =
+    x.data[i1.i, i2.i] = y
+]#
+
+# Rank-0 scalar:
+template tensorType(container, element: typed): expr =
+  element
+# Generate rank-n types and operations.
+proc genTensor(n: int): NimNode {.compileTime.} =
+  let
+    tType = ident("gT" & $n)
+    E = newEmptyNode()
+    D = ident"Container"
+    V = ident"Element"
+  const IxParam = ["id", "lo", "hi"]
+  # Generic Param: [D,V;idI,loI,hiI,...:static[int]]
+  var gParam = newNimNode(nnkGenericParams)
+  gParam.add newNimNode(nnkIdentDefs).add(D, V, E, E)
+  gParam.add newNimNode(nnkIdentDefs)
+  for i in 1..n:
+    for ix in IxParam:
+      gParam[^1].add ident(ix & $i)
+  gParam[^1].add(newNimNode(nnkStaticTy).add(ident"int"), E)
+  # Full tensor type: gTN[D,V,idI,loI,hiI,...]
+  var tTypeFull = newNimNode(nnkBracketExpr).add(tType, D, V)
+  for i in 1..n:
+    for ix in IxParam:
+      tTypeFull.add ident(ix & $i)
+  # Full tensor index type: gTindex[idN,loN,hiN]
+  proc iTypeFull(n: int): NimNode {.compileTime.} =
+    result = newNimNode(nnkBracketExpr).add(ident"gTindex")
+    for i in IxParam:
+      result.add ident(i & $n)
+  result = newStmtList()
+  # Tensor type definition
+  block:
+    let objT = newNimNode(nnkObjectTy).add(
+      E, E, newNimNode(nnkRecList).add(
+        newNimNode(nnkIdentDefs).add(
+          ident"data".postfix("*"), D, E)))
+    result.add newNimNode(nnkTypeSection).add newNimNode(nnkTypeDef).add(tType, gParam, objT)
+  # Template to generate a Tensor type
+  block:
+    var
+      fParam = newNimNode(nnkFormalParams).add(
+        ident"expr",
+        newNimNode(nnkIdentDefs).add(D, V, ident"typed", E),
+        newNimNode(nnkIdentDefs))
+      body = newStmtList().add(newNimNode(nnkConstSection), tTypeFull)
+    for i in 1..n:
+      fParam[2].add ident("i" & $i)
+      for ix in IxParam:
+        body[0].add newNimNode(nnkConstDef).add(
+          ident(ix & $i),
+          E,
+          newDotExpr(ident("i" & $i), ident(ix)))
+    fParam[2].add(ident"typed", E)
+    result.add newNimNode(nnkTemplateDef).add(
+      ident"tensorType", E, E, fParam, E, E, body)
+  # Indexing procs
+  block:
+    let
+      X = ident"x"
+      Y = ident"y"
+      procName = newNimNode(nnkAccQuoted).add(ident"[]").postfix "*"
+    var
+      fParam = newNimNode(nnkFormalParams).add(
+        V, newNimNode(nnkIdentDefs).add(X, tTypeFull, E))
+      body = newNimNode(nnkBracketExpr).add(X.newDotExpr ident"data")
+    for i in 1..n:
+      fParam.add(newNimNode(nnkIdentDefs).add(ident("i" & $i), iTypeFull(i), E))
+      body.add newDotExpr(ident("i" & $i), ident"i")
+    let procIx = newNimNode(nnkProcDef).add(
+      procName, E, gParam, fParam,
+      newNimNode(nnkPragma).add(ident"inline"), E, newStmtList().add body)
+    var procVIx = procIx.copy
+    # [3] is FormalParams of a ProcDef
+    procVIx[3][0] = newNimNode(nnkVarTy).add V # Return type.
+    procVIx[3][1][1] = newNimNode(nnkVarTy).add tTypeFull # Type of X.
+    var procIxEq = procVIx.copy
+    procIxEq[0][1][0] = ident"[]=" # Proc name.
+    procIxEq[3][0] = E
+    procIxEq[3].add newIdentDefs(Y, V)
+    procIxEq[6][0] = newAssignment(procIxEq[6][0], Y)
+    result.add(procIx, procVIx, procIxEq)
+macro genTensors(n: static[int]): stmt =
+  result = newStmtList()
+  for i in 1..n:
+    for c in genTensor(i):
+      result.add c
+  # We `copy` complex structures to avoid some vm bugs.
+  result = result.copy
+const maxTensorRanks = 16
+genTensors(maxTensorRanks)
+
 proc addDot(d: var NimNode, i: NimNode, id: varargs[string]) =
   for s in id:
     d.add(i.newDotExpr s.ident)
-template tensorType(container, element: typed): expr =
-  element
-template tensorType(container, element: typed, i1: typed): expr =
-  const
-    id1 = i1.id
-    lo1 = i1.lo
-    hi1 = i1.hi
-  gT1[container, element, id1, lo1, hi1]
-template tensorType(container, element:typed, i1, i2: typed): expr =
-  const
-    id1 = i1.id
-    lo1 = i1.lo
-    hi1 = i1.hi
-    id2 = i2.id
-    lo2 = i2.lo
-    hi2 = i2.hi
-  gT2[container, element, id1, lo1, hi1, id2, lo2, hi2]
+
 proc genTensorType(container, element, index: NimNode): NimNode =
   result = newCall(bindsym"tensorType", container, element)
   for i in index:
@@ -126,20 +234,6 @@ macro Tensor*(element: typed, index: openarray[typed]): expr =
   for i in index:
     container.addDot(i, "lo", "hi")
   result = genTensorType(container, element, index)
-
-# indexing
-proc `[]`*[D,V;id1,lo1,hi1:static[int]](x: gT1[D,V,id1,lo1,hi1], i1: gTindex[id1,lo1,hi1]): V {.inline.} =
-  x.data[i1.i]
-proc `[]`*[D,V;id1,lo1,hi1:static[int]](x: var gT1[D,V,id1,lo1,hi1], i1: gTindex[id1,lo1,hi1]): var V {.inline.} =
-  x.data[i1.i]
-proc `[]`*[D,V;id1,lo1,hi1,id2,lo2,hi2:static[int]](x: gT2[D,V,id1,lo1,hi1,id2,lo2,hi2], i1: gTindex[id1,lo1,hi1], i2: gTindex[id2,lo2,hi2]): V {.inline.} =
-  x.data[i1.i, i2.i]
-proc `[]`*[D,V;id1,lo1,hi1,id2,lo2,hi2:static[int]](x: var gT2[D,V,id1,lo1,hi1,id2,lo2,hi2], i1: gTindex[id1,lo1,hi1], i2: gTindex[id2,lo2,hi2]): var V {.inline.} =
-  x.data[i1.i, i2.i]
-proc `[]=`*[D,V;id1,lo1,hi1:static[int]](x: var gT1[D,V,id1,lo1,hi1], i1: gTindex[id1,lo1,hi1], y: V) {.inline.} =
-  x.data[i1.i] = y
-proc `[]=`*[D,V;id1,lo1,hi1,id2,lo2,hi2:static[int]](x: var gT2[D,V,id1,lo1,hi1,id2,lo2,hi2], i1: gTindex[id1,lo1,hi1], i2: gTindex[id2,lo2,hi2], y: V) {.inline.} =
-  x.data[i1.i, i2.i] = y
 
 ####################
 # dummy index type
