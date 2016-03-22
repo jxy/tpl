@@ -112,6 +112,15 @@ dumptree:
       lo2 = i2.lo
       hi2 = i2.hi
     gT2[container, element, id1, lo1, hi1, id2, lo2, hi2]
+  template IndexType*[D,V;id1,lo1,hi1:static[int]](t: gT1[D,V,id1,lo1,hi1], n: int): expr =
+    type
+      Index1 = gTindex[id1,lo1,hi1]
+    choice(n, Index1)
+  template IndexType*[D,V;id1,lo1,hi1,id2,lo2,hi2:static[int]](t: gT2[D,V,id1,lo1,hi1,id2,lo2,hi2], n: int): expr =
+    type
+      Index1 = gTindex[id1,lo1,hi1]
+      Index2 = gTindex[id2,lo2,hi2]
+    choice(n, Index1, Index2)
   # indexing
   proc `[]`*[D,V;id1,lo1,hi1:static[int]](x: gT1[D,V,id1,lo1,hi1], i1: gTindex[id1,lo1,hi1]): V {.inline.} =
     x.data[i1.i]
@@ -126,12 +135,18 @@ dumptree:
   proc `[]=`*[D,V;id1,lo1,hi1,id2,lo2,hi2:static[int]](x: var gT2[D,V,id1,lo1,hi1,id2,lo2,hi2], i1: gTindex[id1,lo1,hi1], i2: gTindex[id2,lo2,hi2], y: V) {.inline.} =
     x.data[i1.i, i2.i] = y
 ]#
+macro choice(n: int, v: varargs[expr]): expr =
+  let i = n.staticint
+  if i >= 1 and i <= v.len:
+    result = v[i-1]
+  else:
+    error "Index number, " & $i & ", out of range [1," & $v.len & "]"
 
 # Rank-0 scalar:
 template tensorType(container, element: typed): expr =
   element
 # Generate rank-n types and operations.
-proc genTensor(n: int): NimNode {.compileTime.} =
+template genTensorDefs: stmt {.dirty.} =
   let
     tType = ident("gT" & $n)
     E = newEmptyNode()
@@ -144,8 +159,8 @@ proc genTensor(n: int): NimNode {.compileTime.} =
   gParam.add newNimNode(nnkIdentDefs)
   for i in 1..n:
     for ix in IxParam:
-      gParam[^1].add ident(ix & $i)
-  gParam[^1].add(newNimNode(nnkStaticTy).add(ident"int"), E)
+      gParam[1].add ident(ix & $i)
+  gParam[1].add(newNimNode(nnkStaticTy).add(ident"int"), E)
   # Full tensor type: gTN[D,V,idI,loI,hiI,...]
   var tTypeFull = newNimNode(nnkBracketExpr).add(tType, D, V)
   for i in 1..n:
@@ -156,6 +171,8 @@ proc genTensor(n: int): NimNode {.compileTime.} =
     result = newNimNode(nnkBracketExpr).add(ident"gTindex")
     for i in IxParam:
       result.add ident(i & $n)
+proc genTensor(n: int): NimNode {.compileTime.} =
+  genTensorDefs()
   result = newStmtList()
   # Tensor type definition
   block:
@@ -182,6 +199,23 @@ proc genTensor(n: int): NimNode {.compileTime.} =
     fParam[2].add(ident"typed", E)
     result.add newNimNode(nnkTemplateDef).add(
       ident"tensorType", E, E, fParam, E, E, body)
+  # Template to obtain a index type from a tensor
+  block:
+    let
+      tensor = ident"tensor"
+      nIndex = ident"nIndex"
+      fParam = newNimNode(nnkFormalParams).add(
+        ident"expr",
+        newIdentDefs(tensor, tTypeFull),
+        newIdentDefs(nIndex, ident"int"))
+    var
+      body = newStmtList().add(newNimNode(nnkTypeSection), newCall(ident"choice", nIndex))
+    for i in 1..n:
+      let ixTy = ident("IndexTy" & $i)
+      body[0].add newNimNode(nnkTypeDef).add(ixTy, E, iTypeFull(i))
+      body[1].add ixTy
+    result.add newNimNode(nnkTemplateDef).add(
+      ident"IndexType".postfix("*"), E, gParam, fParam, E, E, body)
   # Indexing procs
   block:
     let
@@ -189,11 +223,10 @@ proc genTensor(n: int): NimNode {.compileTime.} =
       Y = ident"y"
       procName = newNimNode(nnkAccQuoted).add(ident"[]").postfix "*"
     var
-      fParam = newNimNode(nnkFormalParams).add(
-        V, newNimNode(nnkIdentDefs).add(X, tTypeFull, E))
+      fParam = newNimNode(nnkFormalParams).add(V, newIdentDefs(X, tTypeFull))
       body = newNimNode(nnkBracketExpr).add(X.newDotExpr ident"data")
     for i in 1..n:
-      fParam.add(newNimNode(nnkIdentDefs).add(ident("i" & $i), iTypeFull(i), E))
+      fParam.add newIdentDefs(ident("i" & $i), iTypeFull(i))
       body.add newDotExpr(ident("i" & $i), ident"i")
     let procIx = newNimNode(nnkProcDef).add(
       procName, E, gParam, fParam,
@@ -269,39 +302,70 @@ iterator tail*(id, lo, hi: static[int]): gTindex[id,lo,hi] =
       if i.i == hi: break
       inc i.i
 proc tail*(t: gTindexDummy): type(t) {.nodecl.} = discard
-macro choice(n: int, v: varargs[expr]): expr =
-  let i = n.staticint
-  if i >= 1 and i <= v.len:
-    result = v[i-1]
-  else:
-    error "Index number, " & $i & ", out of range [1," & $v.len & "]"
-template IndexType*[D,V;id1,lo1,hi1:static[int]](t: gT1[D,V,id1,lo1,hi1], n: int): expr =
-  type
-    Index1 = gTindex[id1,lo1,hi1]
-  choice(n, Index1)
-template IndexType*[D,V;id1,lo1,hi1,id2,lo2,hi2:static[int]](t: gT2[D,V,id1,lo1,hi1,id2,lo2,hi2], n: int): expr =
-  type
-    Index1 = gTindex[id1,lo1,hi1]
-    Index2 = gTindex[id2,lo2,hi2]
-  choice(n, Index1, Index2)
+
 template index*[id,lo,hi:static[int]](d:gTindexDummy[id,lo,hi], n:static[int]): expr =
   index(gTindex[id,lo,hi], n)
 
-proc `[]`*[D,V;id1,lo1,hi1:static[int]](x: gT1[D,V,id1,lo1,hi1], i1: gTindexDummy[id1,lo1,hi1]): V {.nodecl.} = discard
-proc `[]`*[D,V;id1,lo1,hi1:static[int]](x: var gT1[D,V,id1,lo1,hi1], i1: gTindexDummy[id1,lo1,hi1]): var V {.nodecl.} = discard
-proc `[]=`*[D,V;id1,lo1,hi1:static[int]](x: var gT1[D,V,id1,lo1,hi1], i1: gTindexDummy[id1,lo1,hi1], y: V) {.nodecl.} = discard
+#[
+dumptree:
+  proc `[]`*[D,V;id1,lo1,hi1:static[int]](x: gT1[D,V,id1,lo1,hi1], i1: gTindexDummy[id1,lo1,hi1]): V {.nodecl.} = discard
+  proc `[]`*[D,V;id1,lo1,hi1:static[int]](x: var gT1[D,V,id1,lo1,hi1], i1: gTindexDummy[id1,lo1,hi1]): var V {.nodecl.} = discard
+  proc `[]=`*[D,V;id1,lo1,hi1:static[int]](x: var gT1[D,V,id1,lo1,hi1], i1: gTindexDummy[id1,lo1,hi1], y: V) {.nodecl.} = discard
 
-proc `[]`*[D,V;id1,lo1,hi1,id2,lo2,hi2:static[int]](x: gT2[D,V,id1,lo1,hi1,id2,lo2,hi2], i1: gTindexDummy[id1,lo1,hi1], i2: gTindexDummy[id2,lo2,hi2]): V {.nodecl.} = discard
-proc `[]`*[D,V;id1,lo1,hi1,id2,lo2,hi2:static[int]](x: gT2[D,V,id1,lo1,hi1,id2,lo2,hi2], i1: gTindex[id1,lo1,hi1], i2: gTindexDummy[id2,lo2,hi2]): V {.nodecl.} = discard
-proc `[]`*[D,V;id1,lo1,hi1,id2,lo2,hi2:static[int]](x: gT2[D,V,id1,lo1,hi1,id2,lo2,hi2], i1: gTindexDummy[id1,lo1,hi1], i2: gTindex[id2,lo2,hi2]): V {.nodecl.} = discard
+  proc `[]`*[D,V;id1,lo1,hi1,id2,lo2,hi2:static[int]](x: gT2[D,V,id1,lo1,hi1,id2,lo2,hi2], i1: gTindexDummy[id1,lo1,hi1], i2: gTindexDummy[id2,lo2,hi2]): V {.nodecl.} = discard
+  proc `[]`*[D,V;id1,lo1,hi1,id2,lo2,hi2:static[int]](x: gT2[D,V,id1,lo1,hi1,id2,lo2,hi2], i1: gTindex[id1,lo1,hi1], i2: gTindexDummy[id2,lo2,hi2]): V {.nodecl.} = discard
+  proc `[]`*[D,V;id1,lo1,hi1,id2,lo2,hi2:static[int]](x: gT2[D,V,id1,lo1,hi1,id2,lo2,hi2], i1: gTindexDummy[id1,lo1,hi1], i2: gTindex[id2,lo2,hi2]): V {.nodecl.} = discard
 
-proc `[]`*[D,V;id1,lo1,hi1,id2,lo2,hi2:static[int]](x: var gT2[D,V,id1,lo1,hi1,id2,lo2,hi2], i1: gTindexDummy[id1,lo1,hi1], i2: gTindexDummy[id2,lo2,hi2]): var V {.nodecl.} = discard
-proc `[]`*[D,V;id1,lo1,hi1,id2,lo2,hi2:static[int]](x: var gT2[D,V,id1,lo1,hi1,id2,lo2,hi2], i1: gTindex[id1,lo1,hi1], i2: gTindexDummy[id2,lo2,hi2]): var V {.nodecl.} = discard
-proc `[]`*[D,V;id1,lo1,hi1,id2,lo2,hi2:static[int]](x: var gT2[D,V,id1,lo1,hi1,id2,lo2,hi2], i1: gTindexDummy[id1,lo1,hi1], i2: gTindex[id2,lo2,hi2]): var V {.nodecl.} = discard
+  proc `[]`*[D,V;id1,lo1,hi1,id2,lo2,hi2:static[int]](x: var gT2[D,V,id1,lo1,hi1,id2,lo2,hi2], i1: gTindexDummy[id1,lo1,hi1], i2: gTindexDummy[id2,lo2,hi2]): var V {.nodecl.} = discard
+  proc `[]`*[D,V;id1,lo1,hi1,id2,lo2,hi2:static[int]](x: var gT2[D,V,id1,lo1,hi1,id2,lo2,hi2], i1: gTindex[id1,lo1,hi1], i2: gTindexDummy[id2,lo2,hi2]): var V {.nodecl.} = discard
+  proc `[]`*[D,V;id1,lo1,hi1,id2,lo2,hi2:static[int]](x: var gT2[D,V,id1,lo1,hi1,id2,lo2,hi2], i1: gTindexDummy[id1,lo1,hi1], i2: gTindex[id2,lo2,hi2]): var V {.nodecl.} = discard
 
-proc `[]=`*[D,V;id1,lo1,hi1,id2,lo2,hi2:static[int]](x: var gT2[D,V,id1,lo1,hi1,id2,lo2,hi2], i1: gTindexDummy[id1,lo1,hi1], i2: gTindexDummy[id2,lo2,hi2], y: V) {.nodecl.} = discard
-proc `[]=`*[D,V;id1,lo1,hi1,id2,lo2,hi2:static[int]](x: var gT2[D,V,id1,lo1,hi1,id2,lo2,hi2], i1: gTindex[id1,lo1,hi1], i2: gTindexDummy[id2,lo2,hi2], y: V) {.nodecl.} = discard
-proc `[]=`*[D,V;id1,lo1,hi1,id2,lo2,hi2:static[int]](x: var gT2[D,V,id1,lo1,hi1,id2,lo2,hi2], i1: gTindexDummy[id1,lo1,hi1], i2: gTindex[id2,lo2,hi2], y: V) {.nodecl.} = discard
+  proc `[]=`*[D,V;id1,lo1,hi1,id2,lo2,hi2:static[int]](x: var gT2[D,V,id1,lo1,hi1,id2,lo2,hi2], i1: gTindexDummy[id1,lo1,hi1], i2: gTindexDummy[id2,lo2,hi2], y: V) {.nodecl.} = discard
+  proc `[]=`*[D,V;id1,lo1,hi1,id2,lo2,hi2:static[int]](x: var gT2[D,V,id1,lo1,hi1,id2,lo2,hi2], i1: gTindex[id1,lo1,hi1], i2: gTindexDummy[id2,lo2,hi2], y: V) {.nodecl.} = discard
+  proc `[]=`*[D,V;id1,lo1,hi1,id2,lo2,hi2:static[int]](x: var gT2[D,V,id1,lo1,hi1,id2,lo2,hi2], i1: gTindexDummy[id1,lo1,hi1], i2: gTindex[id2,lo2,hi2], y: V) {.nodecl.} = discard
+{.fatal: "".}
+]#
+
+proc genDummyOp(n: int): NimNode {.compileTime.} =
+  genTensorDefs()
+  result = newStmtList()
+  block:
+    let
+      X = ident"x"
+      Y = ident"y"
+      procName = newNimNode(nnkAccQuoted).add(ident"[]").postfix "*"
+    var
+      fParam = newNimNode(nnkFormalParams).add(V, newIdentDefs(X, tTypeFull))
+    for i in 1..n:
+      fParam.add newIdentDefs(ident("i" & $i), iTypeFull(i))
+    let procIx = newNimNode(nnkProcDef).add(
+      procName, E, gParam, fParam,
+      newNimNode(nnkPragma).add(ident"nodecl"), E,
+      newStmtList().add newNimNode(nnkDiscardStmt).add E)
+    var procVIx = procIx.copy
+    # [3] is FormalParams of a ProcDef
+    procVIx[3][0] = newNimNode(nnkVarTy).add V # Return type.
+    procVIx[3][1][1] = newNimNode(nnkVarTy).add tTypeFull # Type of X.
+    var procIxEq = procVIx.copy
+    procIxEq[0][1][0] = ident"[]=" # Proc name.
+    procIxEq[3][0] = E
+    procIxEq[3].add newIdentDefs(Y, V)
+    result.add(procIx, procVIx, procIxEq)
+  for i in 1..n:
+    for j in 0..<result.len:
+      result.add result[j].copy
+      result[j][3][i+1][1][0] = ident"gTindexDummy" # Change the index type to dummy.
+  result.del(result.len-3, 3)
+  # echo result.repr
+macro genDummyOps(n: static[int]): stmt =
+  result = newStmtList()
+  for i in 1..n:
+    for c in genDummyOp(i):
+      result.add c
+  result = result.copy
+# Complexity increases exponentially, ~2^n
+const maxDummyIndexingRanks = 6
+genDummyOps(maxDummyIndexingRanks)
 
 ####################
 # universal dummy index
