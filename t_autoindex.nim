@@ -44,10 +44,6 @@ tensorOps:
   echo "sm =\n", sm
   csv = -scv*sm
   echo "csv = -scv*sm =\n", csv
-  # sv2 = sv + sv * sv
-  # echo "sv2 = sv + sv * sv = ", sv2
-  # sv2 = sm + sv * sv
-  # echo "sv2 = sm + sv * sv = ", sv2
   scv[i] += (if 0 == (i and 1): (i-0.5)*csv[i] else: (i+0.5)*csv[i])
   echo "scv[i] += (if 0 == (i and 1): (i-0.5)*csv[i] else: (i+0.5)*csv[i]) =\n", scv
   x = sv*sv
