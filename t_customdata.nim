@@ -22,6 +22,7 @@ type
   C = IndexType(0,nc-1)
   S = IndexType(0,ns-1)
   T = Tensor(D, int, [C, S])    # Tensor(container, element, [Index])
+prepareDummy(C, S)
 var
   a: C.Dummy
   i: S.Dummy

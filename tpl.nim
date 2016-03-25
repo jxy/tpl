@@ -306,6 +306,25 @@ proc tail*(t: gTindexDummy): type(t) {.nodecl.} = discard
 template index*[id,lo,hi:static[int]](d:gTindexDummy[id,lo,hi], n:static[int]): expr =
   index(gTindex[id,lo,hi], n)
 
+####################
+# universal dummy index
+type
+  gTindexDummyU = object
+const UniversalDummyIndex = gTindexDummyU()
+
+macro prepareDummy*(d: varargs[typed]): stmt =
+  template convDummyU(cn, t: untyped): stmt =
+    const
+      id = t.id
+      lo = t.lo
+      hi = t.hi
+    converter cn*(x: gTindexDummyU): t {.nodecl.} = discard
+    converter cn*(x: gTindexDummy[id,lo,hi]): t {.nodecl.} = discard
+  result = newStmtList()
+  for i in d:
+    let conv = "__CONV_DummyU__2__" & i.dummyStr
+    result.add getast(convDummyU(ident(conv), i))
+
 #[
 dumptree:
   proc `[]`*[D,V;id1,lo1,hi1:static[int]](x: gT1[D,V,id1,lo1,hi1], i1: gTindexDummy[id1,lo1,hi1]): V {.nodecl.} = discard
@@ -326,77 +345,143 @@ dumptree:
 {.fatal: "".}
 ]#
 
-proc genDummyOp(n: int): NimNode {.compileTime.} =
-  genTensorDefs()
-  result = newStmtList()
-  block:
-    let
-      X = ident"x"
-      Y = ident"y"
-      procName = newNimNode(nnkAccQuoted).add(ident"[]").postfix "*"
-    var
-      fParam = newNimNode(nnkFormalParams).add(V, newIdentDefs(X, tTypeFull))
-    for i in 1..n:
-      fParam.add newIdentDefs(ident("i" & $i), iTypeFull(i))
-    let procIx = newNimNode(nnkProcDef).add(
-      procName, E, gParam, fParam,
-      newNimNode(nnkPragma).add(ident"nodecl"), E,
-      newStmtList().add newNimNode(nnkDiscardStmt).add E)
-    var procVIx = procIx.copy
-    # [3] is FormalParams of a ProcDef
-    procVIx[3][0] = newNimNode(nnkVarTy).add V # Return type.
-    procVIx[3][1][1] = newNimNode(nnkVarTy).add tTypeFull # Type of X.
-    var procIxEq = procVIx.copy
-    procIxEq[0][1][0] = ident"[]=" # Proc name.
-    procIxEq[3][0] = E
-    procIxEq[3].add newIdentDefs(Y, V)
-    result.add(procIx, procVIx, procIxEq)
-  for i in 1..n:
-    for j in 0..<result.len:
-      result.add result[j].copy
-      result[j][3][i+1][1][0] = ident"gTindexDummy" # Change the index type to dummy.
-  result.del(result.len-3, 3)
-  # echo result.repr
-macro genDummyOps(n: static[int]): stmt =
-  result = newStmtList()
-  for i in 1..n:
-    for c in genDummyOp(i):
-      result.add c
-  result = result.copy
+# proc genDummyOp(n: int): NimNode {.compileTime.} =
+#   genTensorDefs()
+#   result = newStmtList()
+#   block:
+#     let
+#       X = ident"x"
+#       Y = ident"y"
+#       procName = newNimNode(nnkAccQuoted).add(ident"[]").postfix "*"
+#     var
+#       fParam = newNimNode(nnkFormalParams).add(V, newIdentDefs(X, tTypeFull))
+#     for i in 1..n:
+#       fParam.add newIdentDefs(ident("i" & $i), iTypeFull(i))
+#     let procIx = newNimNode(nnkProcDef).add(
+#       procName, E, gParam, fParam,
+#       newNimNode(nnkPragma).add(ident"nodecl"), E,
+#       newStmtList().add newNimNode(nnkDiscardStmt).add E)
+#     var procVIx = procIx.copy
+#     # [3] is FormalParams of a ProcDef
+#     procVIx[3][0] = newNimNode(nnkVarTy).add V # Return type.
+#     procVIx[3][1][1] = newNimNode(nnkVarTy).add tTypeFull # Type of X.
+#     var procIxEq = procVIx.copy
+#     procIxEq[0][1][0] = ident"[]=" # Proc name.
+#     procIxEq[3][0] = E
+#     procIxEq[3].add newIdentDefs(Y, V)
+#     result.add(procIx, procVIx, procIxEq)
+#   for i in 1..n:
+#     for j in 0..<result.len:
+#       result.add result[j].copy
+#       result[j][3][i+1][1][0] = ident"gTindexDummy" # Change the index type to dummy.
+#   result.del(result.len-3, 3)
+#   # echo result.repr
+# macro genDummyOps(n: static[int]): stmt =
+#   result = newStmtList()
+#   for i in 1..n:
+#     for c in genDummyOp(i):
+#       result.add c
+#   result = result.copy
 # Complexity increases exponentially, ~2^n
-const maxDummyIndexingRanks = 6
-genDummyOps(maxDummyIndexingRanks)
-
-####################
-# universal dummy index
+# const maxDummyIndexingRanks = 6
+# genDummyOps(maxDummyIndexingRanks)
+# converter dummy2index*[id,lo,hi:static[int]](x: gTindexDummy[id,lo,hi]): gTindex[id,lo,hi] {.nodecl.} =
+#   discard
+# proc dummy2index*[id,lo,hi:static[int]](x: gTindexDummy[id,lo,hi]): gTindex[id,lo,hi] {.nodecl.} =
+#   discard
+# macro indexingT1I1(x, D, V: typed;
+#                    id1, lo1, hi1: static[int];
+#                    i1: typed; i1id, i1lo, i1hi: static[int]): expr =
+#   if id1 == i1id and lo1 == i1lo and hi1 == i1hi:
+#     var
+#       i1 = if i1.gettype.sametype gTindexDummy.gettype: newCall(bindsym"dummy2index", i1) else: i1
+#     result = newCall("[]", x, i1)
+#   else:
+#     error "Indexing fails for: " & x.repr & "[" & i1.repr & "]"
+macro indexingT2I1(x, D, V: typed;
+                   id1, lo1, hi1, id2, lo2, hi2: int;
+                   i1: typed; i1id, i1lo, i1hi: int): expr =
+  if id1.intval == i1id.intval and lo1.intval == i1lo.intval and hi1.intval == i1hi.intval and
+     id2.intval == i1id.intval and lo2.intval == i1lo.intval and hi2.intval == i1hi.intval:
+    error "Ambiguous indexing for: " & x.repr & "[" & i1.repr & "]"
+  elif id1.intval == i1id.intval and lo1.intval == i1lo.intval and hi1.intval == i1hi.intval:
+    result = newCall("[]", x, i1, bindsym"UniversalDummyIndex")
+  elif id2.intval == i1id.intval and lo2.intval == i1lo.intval and hi2.intval == i1hi.intval:
+    result = newCall("[]", x, bindsym"UniversalDummyIndex", i1)
+  else:
+    error "Indexing fails for: " & x.repr & "[" & i1.repr & "]"
+macro indexingEqT2I1(x, D, V: typed;
+                     id1, lo1, hi1, id2, lo2, hi2: int;
+                     i1: typed; i1id, i1lo, i1hi: int;
+                     y: typed): expr =
+  if id1.intval == i1id.intval and lo1.intval == i1lo.intval and hi1.intval == i1hi.intval and
+     id2.intval == i1id.intval and lo2.intval == i1lo.intval and hi2.intval == i1hi.intval:
+    error "Ambiguous indexing for: " & x.repr & "[" & i1.repr & "]=" & y.repr
+  elif id1.intval == i1id.intval and lo1.intval == i1lo.intval and hi1.intval == i1hi.intval:
+    result = newCall("[]=", x, i1, bindsym"UniversalDummyIndex", y)
+  elif id2.intval == i1id.intval and lo2.intval == i1lo.intval and hi2.intval == i1hi.intval:
+    result = newCall("[]=", x, bindsym"UniversalDummyIndex", i1, y)
+  else:
+    error "Indexing fails for: " & x.repr & "[" & i1.repr & "]=" & y.repr
+# macro indexingT2I2(x, D, V: typed;
+#                    id1, lo1, hi1, id2, lo2, hi2: static[int];
+#                    i1: typed; i1id, i1lo, i1hi: static[int];
+#                    i2: typed; i2id, i2lo, i2hi: static[int]): expr =
+#   if id1 == i1id and lo1 == i1lo and hi1 == i1hi and
+#      id2 == i2id and lo2 == i2lo and hi2 == i2hi:
+#     var
+#       i1 = if i1.gettype.sametype gTindexDummy.gettype: newCall(bindsym"dummy2index", i1) else: i1
+#       i2 = if i2.gettype.sametype gTindexDummy.gettype: newCall(bindsym"dummy2index", i2) else: i2
+#     result = newCall("[]", x, i1, i2)
+#   else:
+#     error "Indexing fails for: " & x.repr & "[" & i1.repr & ", " & i2.repr & "]"
+# macro indexingEqT2I2(x, D, V: typed;
+#                      id1, lo1, hi1, id2, lo2, hi2: static[int];
+#                      i1: typed; i1id, i1lo, i1hi: static[int];
+#                      i2: typed; i2id, i2lo, i2hi: static[int];
+#                      y: typed): expr =
+#   if id1 == i1id and lo1 == i1lo and hi1 == i1hi and
+#      id2 == i2id and lo2 == i2lo and hi2 == i2hi:
+#     var
+#       vi1 = if i1.gettype.sametype gTindexDummy.gettype: newCall(bindsym"dummy2index", i1) else: i1
+#       vi2 = if i2.gettype.sametype gTindexDummy.gettype: newCall(bindsym"dummy2index", i2) else: i2
+#     if vi1 == i1 and vi2 == i2:
+#       error "Indexing fails for: " & x.repr & "[" & i1.repr & ", " & i2.repr & "]"
+#     result = newCall("[]=", x, vi1, vi2, y)
+#   else:
+#     error "Indexing fails for: " & x.repr & "[" & i1.repr & ", " & i2.repr & "]"
 type
-  gTindexDummyU = object
-const UniversalDummyIndex = gTindexDummyU()
-macro prepareDummy*(d: varargs[typed]): stmt =
-  template convDummyU(cn, t: untyped): stmt =
-    converter cn*(x: gTindexDummyU): t {.nodecl.} = discard
-  result = newStmtList()
-  for i in d:
-    let conv = "__CONV_DummyU__2__" & i.dummyStr
-    result.add getast(convDummyU(ident(conv), i))
+  IndexOrDummy = gTindex or gTindexDummy
+# template `[]`*[D,V;id1,lo1,hi1:static[int]](x: gT1[D,V,id1,lo1,hi1], i1: IndexOrDummy): expr =
+#   indexingT1I1(x, D, V, id1, lo1, hi1, i1, i1.type.id, i1.type.lo, i1.type.hi)
+# template `[]=`*[D,V;id1,lo1,hi1:static[int]](x: gT1[D,V,id1,lo1,hi1], i1: IndexOrDummy, y: V): expr =
+#   indexingEqT1I1(x, D, V, id1, lo1, hi1, i1, i1.type.id, i1.type.lo, i1.type.hi, y)
+template `[]`*[D,V;id1,lo1,hi1,id2,lo2,hi2:static[int]](x: gT2[D,V,id1,lo1,hi1,id2,lo2,hi2], i1: IndexOrDummy): expr =
+  indexingT2I1(x, D, V, id1, lo1, hi1, id2, lo2, hi2, i1, i1.type.id, i1.type.lo, i1.type.hi)
+template `[]=`*[D,V;id1,lo1,hi1,id2,lo2,hi2:static[int]](x: gT2[D,V,id1,lo1,hi1,id2,lo2,hi2], i1: IndexOrDummy, y: V): expr =
+  indexingEqT2I1(x, D, V, id1, lo1, hi1, id2, lo2, hi2, i1, i1.type.id, i1.type.lo, i1.type.hi, y)
+# template `[]`*[D,V;id1,lo1,hi1,id2,lo2,hi2:static[int]](x: gT2[D,V,id1,lo1,hi1,id2,lo2,hi2], i1: IndexOrDummy, i2: IndexOrDummy): expr =
+#   indexingT2I2(x, D, V, id1, lo1, hi1, id2, lo2, hi2, i1, i1.type.id, i1.type.lo, i1.type.hi, i2, i2.type.id, i2.type.lo, i2.type.hi)
+# template `[]=`*[D,V;id1,lo1,hi1,id2,lo2,hi2:static[int]](x: gT2[D,V,id1,lo1,hi1,id2,lo2,hi2], i1: IndexOrDummy, i2: IndexOrDummy, y: V): expr =
+#   indexingEqT2I2(x, D, V, id1, lo1, hi1, id2, lo2, hi2, i1, i1.type.id, i1.type.lo, i1.type.hi, i2, i2.type.id, i2.type.lo, i2.type.hi, y)
 
-template `[]`*[D,V;id1,lo1,hi1,id2,lo2,hi2:static[int]](x: gT2[D,V,id1,lo1,hi1,id2,lo2,hi2], i1: gTindexDummy[id1,lo1,hi1]): expr =
-  `[]`(x, i1, UniversalDummyIndex)
-template `[]`*[D,V;id1,lo1,hi1,id2,lo2,hi2:static[int]](x: gT2[D,V,id1,lo1,hi1,id2,lo2,hi2], i2: gTindexDummy[id2,lo2,hi2]): expr =
-  `[]`(x, UniversalDummyIndex, i2)
-template `[]`*[D,V;id1,lo1,hi1,id2,lo2,hi2:static[int]](x: gT2[D,V,id1,lo1,hi1,id2,lo2,hi2], i1: gTindex[id1,lo1,hi1]): expr =
-  `[]`(x, i1, UniversalDummyIndex)
-template `[]`*[D,V;id1,lo1,hi1,id2,lo2,hi2:static[int]](x: gT2[D,V,id1,lo1,hi1,id2,lo2,hi2], i2: gTindex[id2,lo2,hi2]): expr =
-  `[]`(x, UniversalDummyIndex, i2)
+# template `[]`*[D,V;id1,lo1,hi1,id2,lo2,hi2:static[int]](x: gT2[D,V,id1,lo1,hi1,id2,lo2,hi2], i1: gTindexDummy[id1,lo1,hi1]): expr =
+#   `[]`(x, i1, UniversalDummyIndex)
+# template `[]`*[D,V;id1,lo1,hi1,id2,lo2,hi2:static[int]](x: gT2[D,V,id1,lo1,hi1,id2,lo2,hi2], i2: gTindexDummy[id2,lo2,hi2]): expr =
+#   `[]`(x, UniversalDummyIndex, i2)
+# template `[]`*[D,V;id1,lo1,hi1,id2,lo2,hi2:static[int]](x: gT2[D,V,id1,lo1,hi1,id2,lo2,hi2], i1: gTindex[id1,lo1,hi1]): expr =
+#   `[]`(x, i1, UniversalDummyIndex)
+# template `[]`*[D,V;id1,lo1,hi1,id2,lo2,hi2:static[int]](x: gT2[D,V,id1,lo1,hi1,id2,lo2,hi2], i2: gTindex[id2,lo2,hi2]): expr =
+#   `[]`(x, UniversalDummyIndex, i2)
 
-template `[]=`*[D,V;id1,lo1,hi1,id2,lo2,hi2:static[int]](x: gT2[D,V,id1,lo1,hi1,id2,lo2,hi2], i1: gTindexDummy[id1,lo1,hi1], y: V): expr =
-  `[]=`(x, i1, UniversalDummyIndex, y)
-template `[]=`*[D,V;id1,lo1,hi1,id2,lo2,hi2:static[int]](x: gT2[D,V,id1,lo1,hi1,id2,lo2,hi2], i2: gTindexDummy[id2,lo2,hi2], y: V): expr =
-  `[]=`(x, UniversalDummyIndex, i2, y)
-template `[]=`*[D,V;id1,lo1,hi1,id2,lo2,hi2:static[int]](x: gT2[D,V,id1,lo1,hi1,id2,lo2,hi2], i1: gTindex[id1,lo1,hi1], y: V): expr =
-  `[]=`(x, i1, UniversalDummyIndex, y)
-template `[]=`*[D,V;id1,lo1,hi1,id2,lo2,hi2:static[int]](x: gT2[D,V,id1,lo1,hi1,id2,lo2,hi2], i2: gTindex[id2,lo2,hi2], y: V): expr =
-  `[]=`(x, UniversalDummyIndex, i2, y)
+# template `[]=`*[D,V;id1,lo1,hi1,id2,lo2,hi2:static[int]](x: gT2[D,V,id1,lo1,hi1,id2,lo2,hi2], i1: gTindexDummy[id1,lo1,hi1], y: V): expr =
+#   `[]=`(x, i1, UniversalDummyIndex, y)
+# template `[]=`*[D,V;id1,lo1,hi1,id2,lo2,hi2:static[int]](x: gT2[D,V,id1,lo1,hi1,id2,lo2,hi2], i2: gTindexDummy[id2,lo2,hi2], y: V): expr =
+#   `[]=`(x, UniversalDummyIndex, i2, y)
+# template `[]=`*[D,V;id1,lo1,hi1,id2,lo2,hi2:static[int]](x: gT2[D,V,id1,lo1,hi1,id2,lo2,hi2], i1: gTindex[id1,lo1,hi1], y: V): expr =
+#   `[]=`(x, i1, UniversalDummyIndex, y)
+# template `[]=`*[D,V;id1,lo1,hi1,id2,lo2,hi2:static[int]](x: gT2[D,V,id1,lo1,hi1,id2,lo2,hi2], i2: gTindex[id2,lo2,hi2], y: V): expr =
+#   `[]=`(x, UniversalDummyIndex, i2, y)
 
 template genUnaryOp(op: untyped): stmt =
   template op*[D,V;id1,lo1,hi1:static[int]](x: gT1[D,V,id1,lo1,hi1]): expr =
@@ -556,7 +641,6 @@ proc genDummyTree(n: NimNode): dummyTree =
       elif n.kind in CallNodes and n[0].kind == nnkSym: n[0].gettype[1]
       else: newEmptyNode()
     # if n.kind in CallNodes and n[0].kind == nnkSym: echo "call type: ", n[0].gettype.lisprepr
-    # echo "** dummy type check got: ", n.repr
     # echo "## dummy type check got type: ", t.repr
     result = t.sametype gTindexDummy.gettype
     # echo "isDummyType returns: ", result
@@ -575,12 +659,19 @@ proc genDummyTree(n: NimNode): dummyTree =
     result.idx.init
     newseq result.branch, n.len
     if n.isDummyType:
+      # echo "   result.idx: ", result.idx.repr
+      # echo "-- dummy: ", n.lisprepr
       result.idx.incl n
+      # echo "   result.idx: ", result.idx.repr
     else:
+      # echo "subtree result.idx: ", result.idx.repr
       for i, c in n:
         let t = if n.skipDummyCheck i: newEmptyNode().g else: c.g
         result.idx += t.idx
+        # echo "     += ", t.idx.repr
+        # echo "        result.idx: ", result.idx.repr
         result.branch[i] = t
+      # echo "subtree result.idx: ", result.idx.repr
   result = n.g
   # echo "<<<< genDummytree =>\n", result.treerepr
 
@@ -646,7 +737,7 @@ macro reAssign(n: untyped): stmt =
     else:
       result = n.rebindAssignment
   result = n.g
-  # dbg "reAssign => ", result, TPLDebug.flow
+  dbg "reAssign => ", result, TPLDebug.detail
 
 type
   Ixk = enum
@@ -1265,7 +1356,7 @@ proc collectTensors(n: NimNode): (seqset[NimNode], seqset[NimNode]) =
           var nkj = n[k+j]
           while nkj.kind in {nnkPar, nnkHiddenDeref, nnkHiddenAddr, nnkHiddenStdConv}:
             nkj = if nkj.kind == nnkHiddenStdConv: nkj[1] else: nkj[0]
-          if nkj.kind in CallNodes + {nnkConv}:
+          if nkj.kind in CallNodes + {nnkConv, nnkStmtListExpr}:
             # Don't care.
             recurseAdd nkj
           elif nkj.kind == nnkSym:

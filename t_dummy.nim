@@ -5,7 +5,7 @@ import tpl
 type
   Spin = IndexType(1,4)
   Color = IndexType(1,4)
-prepareDummy(Spin)
+prepareDummy(Spin,Color)
 block:
   echo "\n* test index types"
   check(Spin isnot Color)
@@ -134,12 +134,13 @@ block:
     v3 = v1 + v2
     check(y[a] == v3[a])
 
+type
+  inT = IndexType(0,1)
+prepareDummy(inT)
 block:
   echo "\n* test nested"
   type
-    inT = IndexType(0,1)
     In = Tensor(float, [inT])
-    Color = IndexType(0,2)
     cm = Tensor(In, [Color, Color])
   var
     i: inT.Dummy
