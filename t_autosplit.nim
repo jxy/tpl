@@ -16,10 +16,9 @@ var
   sm: SM
   cv: CV
   cm: CM
-  scv: SCV
   csv: CSV
-  i, j: S.Dummy
-  a, b: C.Dummy
+  i, j = S.dummy
+  a, b = C.dummy
 test "Automatic split":
   tensorOps:
     sv[i] = 1.0+i

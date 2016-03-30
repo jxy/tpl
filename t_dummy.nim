@@ -9,7 +9,7 @@ test "Index types":
   echo "\n* test index types"
   check(Spin isnot Color)
   var
-    s: Spin
+    # sDirect: Spin # Direct declaration cannot be used in any operations.
     # The following 3 are syntactically equivalent
     # ss = 5.index(Spin)            # compile time error: out of bounds
     c = Color.index 2
@@ -17,23 +17,23 @@ test "Index types":
   echo c
   c.index = 1
   echo c
-  echo s, "  initialized to 0, which is bad, how can we check?"
+  # echo sDirect                  # This would fail.
   # s = Color.index(3)          # compile time error: wrong type
   # s = Spin.index(9)           # compile time error: out of bounds
   const
     one = 1
     two = 2
-  s = Spin.index(two * one)
+  var s = Spin.index(two * one)
   echo s
 
 block:
   echo "\n* test static and non static loops"
   var
     v, sv: Tensor([Spin], float)
-  echo "\n  * staticfor"
-  # staticfor i, Color:         # compile time error: type mismatch
+  echo "\n  * staticforindex"
+  # staticforindex i, Color:         # compile time error: type mismatch
   #   sv[i] = i * 0.1 + 1.0
-  staticfor i, Spin:
+  staticforindex i, Spin:
     sv[i] = i * 0.1 + 1.0
     echo "  [", i, "]: ", sv[i]
   echo "\n  * staticforstmt"
@@ -61,14 +61,14 @@ block:
 
 test "Dummy":
   var
-    a, b: Dummy(Spin)
+    a, b = Spin.dummy
     x, y: Tensor([Spin], float)
     m: Tensor([Spin, Spin], float)
     mn: float
   echo "\n* test dummy"
-  echo "\n  * test staticfor dummy"
+  echo "\n  * test staticforindex dummy"
   mn = 0
-  staticfor i, a:
+  staticforindex i, a:
     m[i, Spin.index(2)] = (i-1.0)*0.1
     echo "  m[",i,",2] = ",m[i,Spin.index(2)]
     mn += m[i,i]
@@ -94,7 +94,7 @@ test "Dummy":
     echo "  x = ", x
   echo "\n  * test auto sum"
   var
-    c, d: a.type
+    c, d = a.dummy
     X, I: Tensor([Spin, Spin], float)
   tensorOpsSilent:
     I[a,a] = 1.0
@@ -140,8 +140,8 @@ test "Nested tensors":
     In = Tensor([inT], float)
     cm = Tensor([Color, Color], In)
   var
-    i: inT.Dummy
-    mu, nu: Color.Dummy
+    i = inT.dummy
+    mu, nu = Color.dummy
     m: cm
   tensorOpsSilent:
     m[mu,nu][i] = 1.0*i*nu + 0.1*mu

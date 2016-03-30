@@ -6,7 +6,7 @@ type
   V = Tensor([Ix], float)
   M = Tensor([Ix, Ix], float)
 var
-  i, j, k: Ix.Dummy
+  i, j, k = Ix.dummy
   x: float
   v1, v2, v3, v4, v5, t: V
   m1, m2, m3, m4: M

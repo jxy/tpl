@@ -23,8 +23,8 @@ type
   S = IndexType(0,ns-1)
   T = Tensor([C, S], int, D)    # Tensor([Index], element, container)
 var
-  a: C.Dummy
-  i: S.Dummy
+  a = C.dummy
+  i = S.dummy
   d: T
 newseq(d.data, nc*ns)           # direct .data access
 test "Custom data layout":

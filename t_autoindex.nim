@@ -17,8 +17,8 @@ var
   cm: CM
   scv: SCV
   csv: CSV
-  i, j: S.Dummy
-  a, b: C.Dummy
+  i, j = S.dummy
+  a, b = C.dummy
 tensorOps:
   sv[i] = 1.0+i
   echo "sv = ", sv

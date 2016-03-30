@@ -56,17 +56,16 @@ type
   # extra static type parameters to differentiate different index
   # types, while maintaining the ability to refer to all the
   # index types with this generic type.
-  AnyIndex[ty:static[TPLIndex],id,lo,hi:static[int]] = object
+  AnyIndex[ty:static[TPLIndex],id,lo,hi:static[int]] = object {.requiresInit.}
     # `ty` is the type of the index.
     # `value` auto inits to 0, which is bad
+    # `requiresInit` in v0.13 gives warning without an explicit initialization
     value: int
   TPLIndex {.pure.} = enum
-    index, dummy
+    raw, index, dummy
 type
+  gTindexUninitialized[id,lo,hi:static[int]] = AnyIndex[TPLIndex.raw,id,lo,hi]
   gTindex[id,lo,hi:static[int]] = AnyIndex[TPLIndex.index,id,lo,hi]
-    # # `i` auto inits to 0, which is bad
-    # # `requiresInit` in v0.13 gives warning without an explicit initialization
-    # i: range[lo..hi]
 converter idx2int*[id,lo,hi:static[int]](i: gTindex[id,lo,hi]): int = i.value
 converter idx2float*[id,lo,hi:static[int]](i: gTindex[id,lo,hi]): float = i.value.float
 iterator indices(id, lo, hi: static[int]): gTindex[id,lo,hi] =
@@ -79,8 +78,12 @@ iterator indices(id, lo, hi: static[int]): gTindex[id,lo,hi] =
     yield i
     if i.value == hi: break
     inc i.value
-iterator items*[id,lo,hi:static[int]](t: typedesc[gTindex[id,lo,hi]]): t =
-  var i = t(value: lo)
+iterator items*[ty:static[TPLIndex];id,lo,hi:static[int]](t: typedesc[AnyIndex[ty,id,lo,hi]]): gTindex[id,lo,hi] =
+  const
+    cid = id
+    clo = lo
+    chi = hi
+  var i = gTindex[cid,clo,chi](value: lo)
   while true:
     yield i
     if i.value == hi: break
@@ -90,19 +93,28 @@ proc `$`*[id,lo,hi:static[int]](x: gTindex[id,lo,hi]): string =
 
 var IndexID {.compileTime.} = 0
 macro IndexType*(lo, hi: static[int]): expr =
-  result = newNimNode(nnkBracketExpr).add(bindsym"gTindex", IndexId.newlit, lo.newlit, hi.newlit)
+  result = newNimNode(nnkBracketExpr).add(
+    bindsym"gTindexUninitialized", IndexId.newlit, lo.newlit, hi.newlit)
   inc IndexId
   # hint "IndexType => " & result.lisprepr
+
 template staticInbound(n, lo, hi: static[int]): expr =
   static:
     if n < lo or n > hi:
       error "index out of bounds: " & $n
+
 proc indexValue[id,lo,hi:static[int]](ix: gTindex[id,lo,hi]): int {.inline.} = ix.value
-proc index*[id,lo,hi:static[int]](t:typedesc[gTindex[id,lo,hi]], n:static[int]): t {.inline.} =
+
+proc index*[ty:static[TPLIndex];id,lo,hi:static[int]](t:typedesc[AnyIndex[ty,id,lo,hi]], n:static[int]): gTindex[id,lo,hi] {.inline.} =
   n.staticInbound lo, hi
-  t(value: n)
-template index*[id,lo,hi:static[int]](n:int, t:typedesc[gTindex[id,lo,hi]]): expr =
-  index(t, n)
+  result = type(result)(value: n)
+template index*[ty:static[TPLIndex];id,lo,hi:static[int]](t:typedesc[AnyIndex[ty,id,lo,hi]]): expr =
+  index(t, lo)
+template index*[ty:static[TPLIndex];id,lo,hi:static[int]](t:AnyIndex[ty,id,lo,hi]): expr =
+  index(type(t), lo)
+template index*[ty:static[TPLIndex];id,lo,hi:static[int]](t:AnyIndex[ty,id,lo,hi], n:static[int]): expr =
+  index(type(t), n)
+
 proc `index=`*[id,lo,hi:static[int]](ix:var gTindex[id,lo,hi], n:static[int]) {.inline.} =
   n.staticInbound lo, hi
   ix.value = n
@@ -259,7 +271,7 @@ macro Tensor*(index: openarray[untyped], element: untyped): expr =
 # dummy index type
 type
   gTindexDummy[id,lo,hi:static[int]] = AnyIndex[TPLIndex.dummy,id,lo,hi]
-converter TPLDummyConv*[id,lo,hi:static[int]](i: gTindexDummy[id,lo,hi]): gTindex[id,lo,hi] {.nodecl.} = discard
+converter TPLDummyConv*[id,lo,hi:static[int]](i: gTindexDummy[id,lo,hi]): gTindex[id,lo,hi] {.nodecl.} = index(i)
 converter TPLDummyConv*[id,lo,hi:static[int]](i: gTindexDummy[id,lo,hi]): int {.nodecl.} = discard
 converter TPLDummyConv*[id,lo,hi:static[int]](i: gTindexDummy[id,lo,hi]): float {.nodecl.} = discard
 proc dummyFromConverter(n: NimNode): NimNode =
@@ -277,10 +289,12 @@ proc dummyFromConverter(n: NimNode): NimNode =
       error "dummyFromConverter got:\n" & n.treerepr & "\nwith f:\n" & f.repr & "\nparameter type: " & t.lisprepr
   # echo "dummyFromConverter: => ", result.lisprepr
 
-template Dummy*[id,lo,hi:static[int]](t: typedesc[gTindex[id,lo,hi]]): expr =
-  gTindexDummy[id,lo,hi]
-template DummyIxType(id,lo,hi: static[int]): expr =
-  gTindexDummy[id,lo,hi]
+proc dummy*[ty:static[TPLIndex];id,lo,hi:static[int]](t: typedesc[AnyIndex[ty,id,lo,hi]]): gTindexDummy[id,lo,hi] =
+  result = type(result)(value: lo)
+proc dummy*[ty:static[TPLIndex];id,lo,hi:static[int]](t: AnyIndex[ty,id,lo,hi]): gTindexDummy[id,lo,hi] =
+  result = type(result)(value: lo)
+proc dummyIx(id,lo,hi: static[int]): gTindexDummy[id,lo,hi] =
+  result = type(result)(value: lo)
 
 iterator items*[id,lo,hi:static[int]](t: gTindexDummy[id,lo,hi]): gTindex[id,lo,hi] =
   const
@@ -293,6 +307,8 @@ iterator items*[id,lo,hi:static[int]](t: gTindexDummy[id,lo,hi]): gTindex[id,lo,
     if i.value == chi: break
     inc i.value
 template head*[id,lo,hi:static[int]](t: gTindexDummy[id,lo,hi]): gTindex[id,lo,hi] =
+  # This `index` call is also a template that gets expanded
+  # leaving no trace of the variable `t`.
   index(t, lo)
 iterator tail*(id, lo, hi: static[int]): gTindex[id,lo,hi] =
   const
@@ -306,14 +322,15 @@ iterator tail*(id, lo, hi: static[int]): gTindex[id,lo,hi] =
       yield i
       if i.value == hi: break
       inc i.value
-proc tail*[id,lo,hi:static[int]](t: gTindexDummy[id,lo,hi]): gTindexDummy[id,lo,hi] {.nodecl.} = discard
+proc tail*[id,lo,hi:static[int]](t: gTindexDummy[id,lo,hi]): gTindexDummy[id,lo,hi] {.nodecl.} = t
 
 template index*[id,lo,hi:static[int]](d:gTindexDummy[id,lo,hi], n:static[int]): expr =
   index(gTindex[id,lo,hi], n)
 
 ####################
 # Automatic dummy index
-proc automaticIndex(id, lo, hi: static[int]): gTindexDummy[id,lo,hi] {.nodecl.} = discard
+proc automaticIndex(id, lo, hi: static[int]): gTindexDummy[id,lo,hi] {.nodecl.} =
+  dummyIx(id, lo, hi)
 
 macro indexingT2I1(x: typed;
                    id1, lo1, hi1, id2, lo2, hi2: int;
@@ -442,7 +459,7 @@ macro defTensorEq(lhs: untyped, rhs: typed): stmt =
     error "Don't know how to create temporaryTensor from lhs: '" & lhs.repr & "' and rhs: '" & rhs.repr & "'"
   dbg "defTensorEq:result => ", result, TPLDebug.detail
 
-macro staticforbody(i: untyped, j: int, t: untyped, n: untyped): untyped =
+macro staticforbody(i: untyped, j: int, t: typed, n: untyped): untyped =
   # echo "\n>>>> staticfor"
   let
     ix = newCall(bindsym"index", t, j)
@@ -450,14 +467,12 @@ macro staticforbody(i: untyped, j: int, t: untyped, n: untyped): untyped =
   # echo result.treerepr
   # echo result.repr
   # echo "<<<< staticfor"
-template staticfor*[id,lo,hi:static[int]](i: untyped, t: typedesc[gTindex[id,lo,hi]], n: untyped): expr =
+template staticforindex*[ty:static[TPLIndex];id,lo,hi:static[int]](i: untyped, t: typedesc[AnyIndex[ty,id,lo,hi]], n: untyped): expr =
   unrollfor j, lo, hi:
     staticforbody(i, j, t, n)
-template staticfor*[id,lo,hi:static[int]](i: untyped, t: typedesc[gTindexDummy[id,lo,hi]], n: untyped): expr =
-  type Index = gTindex[id,lo,hi]
-  staticfor(i,Index,n)
-template staticfor*[id,lo,hi:static[int]](i: untyped, d: gTindexDummy[id,lo,hi], n: untyped): expr =
-  staticfor(i,d.type,n)
+template staticforindex*[ty:static[TPLIndex];id,lo,hi:static[int]](i: untyped, t: AnyIndex[ty,id,lo,hi], n: untyped): expr =
+  unrollfor j, lo, hi:
+    staticforbody(i, j, type(t), n)
 macro staticforstmt*(n: typed): untyped =
   # echo "\n>>>> staticforstmt"
   # echo n.treerepr
@@ -964,10 +979,10 @@ proc contractAutoDummy(n: NimNode): NimNode =
     )
     for i in ix:
       assert i.kind == ixkI
-      var d = newCall(bindsym"DummyIxType")
+      var d = newCall(bindsym"dummyIx")
       for s in i.vIt:
         d.add s
-      result[0].add newIdentDefs(i.vId, d)
+      result[0].add newIdentDefs(i.vId, newEmptyNode(), d)
 macro convertAutoDummy(n: typed): stmt =
   dbg "convertAutoDummy <= ", n, TPLDebug.flow
   proc g(n: NimNode): NimNode =
@@ -1678,7 +1693,7 @@ macro tensorOpsSilent*(n: untyped): stmt =
   result = tensorOpsWithDbgLevel(TPLDebug.none, n)
 
 proc `$`*[D,V;id1,lo1,hi1:static[int]](v: gT1[D,V,id1,lo1,hi1]): string {.tensorOpsSilent.} =
-  var i: Dummy(IndexType(v, 1))
+  var i = IndexType(v, 1).dummy
   result = "["
   if true:                    # This would put them in the same loops.
     result &= " " & $v[i]
@@ -1690,8 +1705,8 @@ proc `$`*[D,V;id1,lo1,hi1,id2,lo2,hi2:static[int]](m: gT2[D,V,id1,lo1,hi1,id2,lo
     I1 = IndexType(m, 1)
     I2 = IndexType(m, 2)
   var
-    i: I1.Dummy
-    j: I2.Dummy
+    i = I1.dummy
+    j = I2.dummy
     ws: Tensor([I1], int)
     xs: Tensor([I1, I2], string)
   result = ""
