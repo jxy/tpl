@@ -5,8 +5,7 @@ import tpl
 type
   Spin = IndexType(1,4)
   Color = IndexType(1,4)
-prepareDummy(Spin,Color)
-block:
+test "Index types":
   echo "\n* test index types"
   check(Spin isnot Color)
   var
@@ -30,7 +29,7 @@ block:
 block:
   echo "\n* test static and non static loops"
   var
-    v, sv: Tensor(float, [Spin])
+    v, sv: Tensor([Spin], float)
   echo "\n  * staticfor"
   # staticfor i, Color:         # compile time error: type mismatch
   #   sv[i] = i * 0.1 + 1.0
@@ -54,17 +53,17 @@ block:
     s2 = IndexType(3, 4)
     c3 = IndexType(0, 2)
   var
-    scv: Tensor(float, [s2, c3])
+    scv: Tensor([s2, c3], float)
   for j in c3:
     for i in s2:
       scv[i,j] = float i*10+j
       echo "[", i, ",", j, "]: ", scv[i,j]
 
-block:
+test "Dummy":
   var
     a, b: Dummy(Spin)
-    x, y: Tensor(float, [Spin])
-    m: Tensor(float, [Spin, Spin])
+    x, y: Tensor([Spin], float)
+    m: Tensor([Spin, Spin], float)
     mn: float
   echo "\n* test dummy"
   echo "\n  * test staticfor dummy"
@@ -96,7 +95,7 @@ block:
   echo "\n  * test auto sum"
   var
     c, d: a.type
-    X, I: Tensor(float, [Spin, Spin])
+    X, I: Tensor([Spin, Spin], float)
   tensorOpsSilent:
     I[a,a] = 1.0
     echo "  I =\n", I
@@ -134,14 +133,12 @@ block:
     v3 = v1 + v2
     check(y[a] == v3[a])
 
-type
-  inT = IndexType(0,1)
-prepareDummy(inT)
-block:
+test "Nested tensors":
   echo "\n* test nested"
   type
-    In = Tensor(float, [inT])
-    cm = Tensor(In, [Color, Color])
+    inT = IndexType(0,1)
+    In = Tensor([inT], float)
+    cm = Tensor([Color, Color], In)
   var
     i: inT.Dummy
     mu, nu: Color.Dummy
@@ -149,3 +146,5 @@ block:
   tensorOpsSilent:
     m[mu,nu][i] = 1.0*i*nu + 0.1*mu
     echo m
+  check(m[mu.index 2, nu.index 1][i.index 0] == 0.2)
+  check(m[mu.index 2, nu.index 3][i.index 1] == 3.2)

@@ -3,13 +3,12 @@ import tpl
 type
   S = IndexType(0,1)
   C = IndexType(0,2)
-  SV = Tensor(float, [S])
-  SM = Tensor(float, [S,S])
-  CV = Tensor(float, [C])
-  CM = Tensor(float, [C,C])
-  SCV = Tensor(float, [S,C])
-  CSV = Tensor(float, [C,S])
-# prepareAutoIndex(SV, SM, CV, CM, SCV, CSV)
+  SV = Tensor([S], float)
+  SM = Tensor([S,S], float)
+  CV = Tensor([C], float)
+  CM = Tensor([C,C], float)
+  SCV = Tensor([S,C], float)
+  CSV = Tensor([C,S], float)
 var
   x: float
   sv, sv2: SV
@@ -20,7 +19,6 @@ var
   csv: CSV
   i, j: S.Dummy
   a, b: C.Dummy
-prepareDummy(S, C)
 tensorOps:
   sv[i] = 1.0+i
   echo "sv = ", sv

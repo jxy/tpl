@@ -4,6 +4,9 @@ import utils
 import tensor_data_default
 import strutils
 
+export tensor_data_default.`[]`
+export tensor_data_default.`[]=`
+
 type
   TPLDebug* {.pure.} = enum
     none, final, output, flow, detail
@@ -45,134 +48,108 @@ macro showCallResult(n: untyped): stmt =
 ####################
 # index type
 type
-  gTindex[id,lo,hi:static[int]] = object {.requiresInit.}
-    # `i` auto inits to 0, which is bad
-    # `requiresInit` in v0.13 gives warning without an explicit initialization
-    i: range[lo..hi]
-converter idx2int*[id,lo,hi:static[int]](i: gTindex[id,lo,hi]): int = i.i
-converter idx2float*[id,lo,hi:static[int]](i: gTindex[id,lo,hi]): float = i.i.float
+  # Ideally `AnyIndex` would be a type class to simply the
+  # complexity of defining indexing procedures with all the
+  # possible index types (O(e^n) definitions for rank-n tensor if
+  # defined separately for each index type).  The type class of
+  # generic types does not work reliably in Nim now, so we use an
+  # extra static type parameters to differentiate different index
+  # types, while maintaining the ability to refer to all the
+  # index types with this generic type.
+  AnyIndex[ty:static[TPLIndex],id,lo,hi:static[int]] = object
+    # `ty` is the type of the index.
+    # `value` auto inits to 0, which is bad
+    value: int
+  TPLIndex {.pure.} = enum
+    index, dummy
+type
+  gTindex[id,lo,hi:static[int]] = AnyIndex[TPLIndex.index,id,lo,hi]
+    # # `i` auto inits to 0, which is bad
+    # # `requiresInit` in v0.13 gives warning without an explicit initialization
+    # i: range[lo..hi]
+converter idx2int*[id,lo,hi:static[int]](i: gTindex[id,lo,hi]): int = i.value
+converter idx2float*[id,lo,hi:static[int]](i: gTindex[id,lo,hi]): float = i.value.float
 iterator indices(id, lo, hi: static[int]): gTindex[id,lo,hi] =
   const
     cid = id
     clo = lo
     chi = hi
-  var i = gTindex[cid,clo,chi](i: lo)
+  var i = gTindex[cid,clo,chi](value: lo)
   while true:
     yield i
-    if i.i == hi: break
-    inc i.i
+    if i.value == hi: break
+    inc i.value
 iterator items*[id,lo,hi:static[int]](t: typedesc[gTindex[id,lo,hi]]): t =
-  var i = t(i: lo)
+  var i = t(value: lo)
   while true:
     yield i
-    if i.i == hi: break
-    inc i.i
+    if i.value == hi: break
+    inc i.value
 proc `$`*[id,lo,hi:static[int]](x: gTindex[id,lo,hi]): string =
-  $x.i & ":Idx[" & $id & "," & $lo & "," & $hi & "]"
+  $x.value & ":Idx[" & $id & "," & $lo & "," & $hi & "]"
+
 var IndexID {.compileTime.} = 0
-proc nextIndexID: int {.compileTime.} =
-  result = IndexID
-  inc IndexID
-template IndexType*(lo, hi: int): typedesc = gTindex[nextIndexID(),lo,hi]
+macro IndexType*(lo, hi: static[int]): expr =
+  result = newNimNode(nnkBracketExpr).add(bindsym"gTindex", IndexId.newlit, lo.newlit, hi.newlit)
+  inc IndexId
+  # hint "IndexType => " & result.lisprepr
 template staticInbound(n, lo, hi: static[int]): expr =
   static:
     if n < lo or n > hi:
       error "index out of bounds: " & $n
+proc indexValue[id,lo,hi:static[int]](ix: gTindex[id,lo,hi]): int {.inline.} = ix.value
 proc index*[id,lo,hi:static[int]](t:typedesc[gTindex[id,lo,hi]], n:static[int]): t {.inline.} =
   n.staticInbound lo, hi
-  t(i: n)
+  t(value: n)
 template index*[id,lo,hi:static[int]](n:int, t:typedesc[gTindex[id,lo,hi]]): expr =
   index(t, n)
 proc `index=`*[id,lo,hi:static[int]](ix:var gTindex[id,lo,hi], n:static[int]) {.inline.} =
   n.staticInbound lo, hi
-  ix.i = n
+  ix.value = n
+
+macro nthIndex(n: static[int], ixnums: varargs[int]): expr =
+  # echo "nthIndex <= ", $n, ", ", ixnums.repr
+  if n >= 1 and n <= ixnums.len div 3:
+    result = newNimNode(nnkBracketExpr).add bindsym"gTindex"
+    for i in 3*(n-1) .. 3*n-1:
+      # echo i
+      result.add ixnums[i]
+  else:
+    error "Index number, " & $n & ", out of range [1," & $(ixnums.len div 3) & "]"
+  # echo "nthIndex => ", result.lisprepr
 
 ####################
 # tensor types
-# Leave the following, which we generate using macros, commented out for reference.
-#[
-dumptree:
-  type
-    gT1[D,V;id1,lo1,hi1:static[int]] = object
-      data*: D
-    gT2[D,V;id1,lo1,hi1,id2,lo2,hi2:static[int]] = object
-      data*: D
-  template tensorType(container, element: typed, i1: typed): expr =
-    const
-      id1 = i1.id
-      lo1 = i1.lo
-      hi1 = i1.hi
-    gT1[container, element, id1, lo1, hi1]
-  template tensorType(container, element:typed, i1, i2: typed): expr =
-    const
-      id1 = i1.id
-      lo1 = i1.lo
-      hi1 = i1.hi
-      id2 = i2.id
-      lo2 = i2.lo
-      hi2 = i2.hi
-    gT2[container, element, id1, lo1, hi1, id2, lo2, hi2]
-  template IndexType*[D,V;id1,lo1,hi1:static[int]](t: gT1[D,V,id1,lo1,hi1], n: int): expr =
-    type
-      Index1 = gTindex[id1,lo1,hi1]
-    choice(n, Index1)
-  template IndexType*[D,V;id1,lo1,hi1,id2,lo2,hi2:static[int]](t: gT2[D,V,id1,lo1,hi1,id2,lo2,hi2], n: int): expr =
-    type
-      Index1 = gTindex[id1,lo1,hi1]
-      Index2 = gTindex[id2,lo2,hi2]
-    choice(n, Index1, Index2)
-  # indexing
-  proc `[]`*[D,V;id1,lo1,hi1:static[int]](x: gT1[D,V,id1,lo1,hi1], i1: gTindex[id1,lo1,hi1]): V {.inline.} =
-    x.data[i1.i]
-  proc `[]`*[D,V;id1,lo1,hi1:static[int]](x: var gT1[D,V,id1,lo1,hi1], i1: gTindex[id1,lo1,hi1]): var V {.inline.} =
-    x.data[i1.i]
-  proc `[]=`*[D,V;id1,lo1,hi1:static[int]](x: var gT1[D,V,id1,lo1,hi1], i1: gTindex[id1,lo1,hi1], y: V) {.inline.} =
-    x.data[i1.i] = y
-  proc `[]`*[D,V;id1,lo1,hi1,id2,lo2,hi2:static[int]](x: gT2[D,V,id1,lo1,hi1,id2,lo2,hi2], i1: gTindex[id1,lo1,hi1], i2: gTindex[id2,lo2,hi2]): V {.inline.} =
-    x.data[i1.i, i2.i]
-  proc `[]`*[D,V;id1,lo1,hi1,id2,lo2,hi2:static[int]](x: var gT2[D,V,id1,lo1,hi1,id2,lo2,hi2], i1: gTindex[id1,lo1,hi1], i2: gTindex[id2,lo2,hi2]): var V {.inline.} =
-    x.data[i1.i, i2.i]
-  proc `[]=`*[D,V;id1,lo1,hi1,id2,lo2,hi2:static[int]](x: var gT2[D,V,id1,lo1,hi1,id2,lo2,hi2], i1: gTindex[id1,lo1,hi1], i2: gTindex[id2,lo2,hi2], y: V) {.inline.} =
-    x.data[i1.i, i2.i] = y
-]#
-macro choice(n: int, v: varargs[expr]): expr =
-  let i = n.staticint
-  if i >= 1 and i <= v.len:
-    result = v[i-1]
-  else:
-    error "Index number, " & $i & ", out of range [1," & $v.len & "]"
 
 # Rank-0 scalar:
-template tensorType(container, element: typed): expr =
+template tensorType(container, element: typedesc): expr =
   element
-# Generate rank-n types and operations.
-template genTensorDefs: stmt {.dirty.} =
+# Generate rank-n tensors:
+proc genTensor(n: int): NimNode {.compileTime.} =
   let
     tType = ident("gT" & $n)
     E = newEmptyNode()
     D = ident"Container"
     V = ident"Element"
   const IxParam = ["id", "lo", "hi"]
+  template addIxParams(n: NimNode, i: int): stmt =
+    for ix in IxParam:
+      n.add ident(ix & $i)
   # Generic Param: [D,V;idI,loI,hiI,...:static[int]]
   var gParam = newNimNode(nnkGenericParams)
   gParam.add newNimNode(nnkIdentDefs).add(D, V, E, E)
   gParam.add newNimNode(nnkIdentDefs)
   for i in 1..n:
-    for ix in IxParam:
-      gParam[1].add ident(ix & $i)
+    gParam[1].addIxParams i
   gParam[1].add(newNimNode(nnkStaticTy).add(ident"int"), E)
   # Full tensor type: gTN[D,V,idI,loI,hiI,...]
   var tTypeFull = newNimNode(nnkBracketExpr).add(tType, D, V)
   for i in 1..n:
-    for ix in IxParam:
-      tTypeFull.add ident(ix & $i)
-  # Full tensor index type: gTindex[idN,loN,hiN]
-  proc iTypeFull(n: int): NimNode {.compileTime.} =
-    result = newNimNode(nnkBracketExpr).add(ident"gTindex")
-    for i in IxParam:
-      result.add ident(i & $n)
-proc genTensor(n: int): NimNode {.compileTime.} =
-  genTensorDefs()
+    tTypeFull.addIxParams i
+  # Full tensor index type: AnyIndex[tyN,idN,loN,hiN]
+  proc iTypeAny(n: int): NimNode {.compileTime.} =
+    result = newNimNode(nnkBracketExpr).add(ident"AnyIndex", ident("ty" & $n))
+    result.addIxParams n
   result = newStmtList()
   # Tensor type definition
   block:
@@ -186,7 +163,7 @@ proc genTensor(n: int): NimNode {.compileTime.} =
     var
       fParam = newNimNode(nnkFormalParams).add(
         ident"expr",
-        newNimNode(nnkIdentDefs).add(D, V, ident"typed", E),
+        newNimNode(nnkIdentDefs).add(D, V, ident"typedesc", E),
         newNimNode(nnkIdentDefs))
       body = newStmtList().add(newNimNode(nnkConstSection), tTypeFull)
     for i in 1..n:
@@ -196,7 +173,7 @@ proc genTensor(n: int): NimNode {.compileTime.} =
           ident(ix & $i),
           E,
           newDotExpr(ident("i" & $i), ident(ix)))
-    fParam[2].add(ident"typed", E)
+    fParam[2].add(ident"typedesc", E)
     result.add newNimNode(nnkTemplateDef).add(
       ident"tensorType", E, E, fParam, E, E, body)
   # Template to obtain a index type from a tensor
@@ -209,11 +186,9 @@ proc genTensor(n: int): NimNode {.compileTime.} =
         newIdentDefs(tensor, tTypeFull),
         newIdentDefs(nIndex, ident"int"))
     var
-      body = newStmtList().add(newNimNode(nnkTypeSection), newCall(ident"choice", nIndex))
+      body = newCall(bindsym"nthIndex", nIndex)
     for i in 1..n:
-      let ixTy = ident("IndexTy" & $i)
-      body[0].add newNimNode(nnkTypeDef).add(ixTy, E, iTypeFull(i))
-      body[1].add ixTy
+      body.addIxParams i
     result.add newNimNode(nnkTemplateDef).add(
       ident"IndexType".postfix("*"), E, gParam, fParam, E, E, body)
   # Indexing procs
@@ -223,24 +198,35 @@ proc genTensor(n: int): NimNode {.compileTime.} =
       Y = ident"y"
       procName = newNimNode(nnkAccQuoted).add(ident"[]").postfix "*"
     var
-      fParam = newNimNode(nnkFormalParams).add(V, newIdentDefs(X, tTypeFull))
+      # fParam = newNimNode(nnkFormalParams).add(V, newIdentDefs(X, tTypeFull))
+      fParam = newNimNode(nnkFormalParams).add(ident"expr", newIdentDefs(X, tTypeFull))
       body = newNimNode(nnkBracketExpr).add(X.newDotExpr ident"data")
     for i in 1..n:
-      fParam.add newIdentDefs(ident("i" & $i), iTypeFull(i))
-      body.add newDotExpr(ident("i" & $i), ident"i")
-    let procIx = newNimNode(nnkProcDef).add(
-      procName, E, gParam, fParam,
-      newNimNode(nnkPragma).add(ident"inline"), E, newStmtList().add body)
-    var procVIx = procIx.copy
+      fParam.add newIdentDefs(ident("i" & $i), iTypeAny(i))
+      # body.add newDotExpr(ident("i" & $i), ident"i")
+      body.add newCall(bindsym"indexValue", ident("i" & $i))
+    # let procIx = newNimNode(nnkProcDef).add(
+    #   procName, E, gParam, fParam,
+    #   newNimNode(nnkPragma).add(ident"inline"), E, newStmtList().add body)
+    var gParamAny = gParam.copy
+    gParamAny.add newNimNode(nnkIdentDefs)
+    for i in 1..n:
+      gParamAny[^1].add ident("ty" & $i)
+    gParamAny[^1].add(newNimNode(nnkStaticTy).add(ident"TPLIndex"), E)
+    let procIx = newNimNode(nnkTemplateDef).add(
+      procName, E, gParamAny, fParam, E, E, newStmtList body)
+    # var procVIx = procIx.copy
     # [3] is FormalParams of a ProcDef
-    procVIx[3][0] = newNimNode(nnkVarTy).add V # Return type.
-    procVIx[3][1][1] = newNimNode(nnkVarTy).add tTypeFull # Type of X.
-    var procIxEq = procVIx.copy
+    # procVIx[3][0] = newNimNode(nnkVarTy).add V # Return type.
+    # procVIx[3][1][1] = newNimNode(nnkVarTy).add tTypeFull # Type of X.
+    # var procIxEq = procVIx.copy
+    var procIxEq = procIx.copy
     procIxEq[0][1][0] = ident"[]=" # Proc name.
-    procIxEq[3][0] = E
+    # procIxEq[3][0] = E
     procIxEq[3].add newIdentDefs(Y, V)
     procIxEq[6][0] = newAssignment(procIxEq[6][0], Y)
-    result.add(procIx, procVIx, procIxEq)
+    # result.add(procIx, procVIx, procIxEq)
+    result.add(procIx, procIxEq)
 macro genTensors(n: static[int]): stmt =
   result = newStmtList()
   for i in 1..n:
@@ -248,6 +234,7 @@ macro genTensors(n: static[int]): stmt =
       result.add c
   # We `copy` complex structures to avoid some vm bugs.
   result = result.copy
+  # echo "genTensors(", n, ") =>\n", result.repr
 const maxTensorRanks = 16
 genTensors(maxTensorRanks)
 
@@ -260,9 +247,9 @@ proc genTensorType(container, element, index: NimNode): NimNode =
   for i in index:
     result.add i
   # echo "<<<< genTensortype => ", result.lisprepr
-macro Tensor*(container, element: typed, index: openarray[typed]): expr =
+macro Tensor*(index: openarray[untyped], element, container: untyped): expr =
   result = genTensorType(container, element, index)
-macro Tensor*(element: typed, index: openarray[typed]): expr =
+macro Tensor*(index: openarray[untyped], element: untyped): expr =
   var container = newCall(bindsym"TensorDataDefault", element)
   for i in index:
     container.addDot(i, "lo", "hi")
@@ -271,24 +258,42 @@ macro Tensor*(element: typed, index: openarray[typed]): expr =
 ####################
 # dummy index type
 type
-  gTindexDummy[id,lo,hi:static[int]] = object
-converter dummy2int*[id,lo,hi:static[int]](i: gTindexDummy[id,lo,hi]): int {.nodecl.} = discard
-converter dummy2float*[id,lo,hi:static[int]](i: gTindexDummy[id,lo,hi]): float {.nodecl.} = discard
+  gTindexDummy[id,lo,hi:static[int]] = AnyIndex[TPLIndex.dummy,id,lo,hi]
+converter TPLDummyConv*[id,lo,hi:static[int]](i: gTindexDummy[id,lo,hi]): gTindex[id,lo,hi] {.nodecl.} = discard
+converter TPLDummyConv*[id,lo,hi:static[int]](i: gTindexDummy[id,lo,hi]): int {.nodecl.} = discard
+converter TPLDummyConv*[id,lo,hi:static[int]](i: gTindexDummy[id,lo,hi]): float {.nodecl.} = discard
+proc dummyFromConverter(n: NimNode): NimNode =
+  if n.kind in CallNodes and n[0].kind == nnkSym and "TPLDummyConv" == $n[0]:
+    let
+      f = n[0].symbol.getimpl
+      t = f[3][1][1]
+    # echo "call type: ", n[0].gettype.lisprepr
+    # echo "call Impl:\n", f.treerepr
+    if f.kind == nnkConverterDef and
+       ((t[0] == bindsym"AnyIndex" and t[1].intval == int(TPLIndex.dummy)) or
+        t[0] == bindsym"gTindexDummy"):
+      result = n[1]
+    else:
+      error "dummyFromConverter got:\n" & n.treerepr & "\nwith f:\n" & f.repr & "\nparameter type: " & t.lisprepr
+  # echo "dummyFromConverter: => ", result.lisprepr
 
-template Dummy*[id,lo,hi:static[int]](t: typedesc[gTindex[id,lo,hi]]): typedesc[gTindexDummy[id,lo,hi]] =
+template Dummy*[id,lo,hi:static[int]](t: typedesc[gTindex[id,lo,hi]]): expr =
   gTindexDummy[id,lo,hi]
+template DummyIxType(id,lo,hi: static[int]): expr =
+  gTindexDummy[id,lo,hi]
+
 iterator items*[id,lo,hi:static[int]](t: gTindexDummy[id,lo,hi]): gTindex[id,lo,hi] =
   const
     cid = id
     clo = lo
     chi = hi
-  var i = gTindex[cid,clo,chi](i: clo)
+  var i = gTindex[cid,clo,chi](value: clo)
   while true:
     yield i
-    if i.i == chi: break
-    inc i.i
+    if i.value == chi: break
+    inc i.value
 template head*[id,lo,hi:static[int]](t: gTindexDummy[id,lo,hi]): gTindex[id,lo,hi] =
-  index(gTindex[id,lo,hi], lo)
+  index(t, lo)
 iterator tail*(id, lo, hi: static[int]): gTindex[id,lo,hi] =
   const
     cid = id
@@ -296,68 +301,33 @@ iterator tail*(id, lo, hi: static[int]): gTindex[id,lo,hi] =
     chi = hi
     lo1 = lo + 1
   if lo1 <= hi:
-    var i = gTindex[cid,clo,chi](i: lo1)
+    var i = gTindex[cid,clo,chi](value: lo1)
     while true:
       yield i
-      if i.i == hi: break
-      inc i.i
-proc tail*(t: gTindexDummy): type(t) {.nodecl.} = discard
+      if i.value == hi: break
+      inc i.value
+proc tail*[id,lo,hi:static[int]](t: gTindexDummy[id,lo,hi]): gTindexDummy[id,lo,hi] {.nodecl.} = discard
 
 template index*[id,lo,hi:static[int]](d:gTindexDummy[id,lo,hi], n:static[int]): expr =
   index(gTindex[id,lo,hi], n)
 
 ####################
-# universal dummy index
-type
-  gTindexDummyU = object
-const UniversalDummyIndex = gTindexDummyU()
+# Automatic dummy index
+proc automaticIndex(id, lo, hi: static[int]): gTindexDummy[id,lo,hi] {.nodecl.} = discard
 
-macro prepareDummy*(d: varargs[typed]): stmt =
-  template convDummyU(cn, t: untyped): stmt =
-    const
-      id = t.id
-      lo = t.lo
-      hi = t.hi
-    converter cn*(x: gTindexDummyU): t {.nodecl.} = discard
-    converter cn*(x: gTindexDummy[id,lo,hi]): t {.nodecl.} = discard
-  result = newStmtList()
-  for i in d:
-    let conv = "__CONV_DummyU__2__" & i.dummyStr
-    result.add getast(convDummyU(ident(conv), i))
-
-#[
-dumptree:
-  proc `[]`*[D,V;id1,lo1,hi1:static[int]](x: gT1[D,V,id1,lo1,hi1], i1: gTindexDummy[id1,lo1,hi1]): V {.nodecl.} = discard
-  proc `[]`*[D,V;id1,lo1,hi1:static[int]](x: var gT1[D,V,id1,lo1,hi1], i1: gTindexDummy[id1,lo1,hi1]): var V {.nodecl.} = discard
-  proc `[]=`*[D,V;id1,lo1,hi1:static[int]](x: var gT1[D,V,id1,lo1,hi1], i1: gTindexDummy[id1,lo1,hi1], y: V) {.nodecl.} = discard
-
-  proc `[]`*[D,V;id1,lo1,hi1,id2,lo2,hi2:static[int]](x: gT2[D,V,id1,lo1,hi1,id2,lo2,hi2], i1: gTindexDummy[id1,lo1,hi1], i2: gTindexDummy[id2,lo2,hi2]): V {.nodecl.} = discard
-  proc `[]`*[D,V;id1,lo1,hi1,id2,lo2,hi2:static[int]](x: gT2[D,V,id1,lo1,hi1,id2,lo2,hi2], i1: gTindex[id1,lo1,hi1], i2: gTindexDummy[id2,lo2,hi2]): V {.nodecl.} = discard
-  proc `[]`*[D,V;id1,lo1,hi1,id2,lo2,hi2:static[int]](x: gT2[D,V,id1,lo1,hi1,id2,lo2,hi2], i1: gTindexDummy[id1,lo1,hi1], i2: gTindex[id2,lo2,hi2]): V {.nodecl.} = discard
-
-  proc `[]`*[D,V;id1,lo1,hi1,id2,lo2,hi2:static[int]](x: var gT2[D,V,id1,lo1,hi1,id2,lo2,hi2], i1: gTindexDummy[id1,lo1,hi1], i2: gTindexDummy[id2,lo2,hi2]): var V {.nodecl.} = discard
-  proc `[]`*[D,V;id1,lo1,hi1,id2,lo2,hi2:static[int]](x: var gT2[D,V,id1,lo1,hi1,id2,lo2,hi2], i1: gTindex[id1,lo1,hi1], i2: gTindexDummy[id2,lo2,hi2]): var V {.nodecl.} = discard
-  proc `[]`*[D,V;id1,lo1,hi1,id2,lo2,hi2:static[int]](x: var gT2[D,V,id1,lo1,hi1,id2,lo2,hi2], i1: gTindexDummy[id1,lo1,hi1], i2: gTindex[id2,lo2,hi2]): var V {.nodecl.} = discard
-
-  proc `[]=`*[D,V;id1,lo1,hi1,id2,lo2,hi2:static[int]](x: var gT2[D,V,id1,lo1,hi1,id2,lo2,hi2], i1: gTindexDummy[id1,lo1,hi1], i2: gTindexDummy[id2,lo2,hi2], y: V) {.nodecl.} = discard
-  proc `[]=`*[D,V;id1,lo1,hi1,id2,lo2,hi2:static[int]](x: var gT2[D,V,id1,lo1,hi1,id2,lo2,hi2], i1: gTindex[id1,lo1,hi1], i2: gTindexDummy[id2,lo2,hi2], y: V) {.nodecl.} = discard
-  proc `[]=`*[D,V;id1,lo1,hi1,id2,lo2,hi2:static[int]](x: var gT2[D,V,id1,lo1,hi1,id2,lo2,hi2], i1: gTindexDummy[id1,lo1,hi1], i2: gTindex[id2,lo2,hi2], y: V) {.nodecl.} = discard
-{.fatal: "".}
-]#
-
-macro indexingT2I1(x, D, V: typed;
+macro indexingT2I1(x: typed;
                    id1, lo1, hi1, id2, lo2, hi2: int;
                    i1: typed; i1id, i1lo, i1hi: int): expr =
   if id1.intval == i1id.intval and lo1.intval == i1lo.intval and hi1.intval == i1hi.intval and
      id2.intval == i1id.intval and lo2.intval == i1lo.intval and hi2.intval == i1hi.intval:
     error "Ambiguous indexing for: " & x.repr & "[" & i1.repr & "]"
   elif id1.intval == i1id.intval and lo1.intval == i1lo.intval and hi1.intval == i1hi.intval:
-    result = newCall("[]", x, i1, bindsym"UniversalDummyIndex")
+    result = newCall("[]", x, i1, newCall(bindsym"automaticIndex", id2, lo2, hi2))
   elif id2.intval == i1id.intval and lo2.intval == i1lo.intval and hi2.intval == i1hi.intval:
-    result = newCall("[]", x, bindsym"UniversalDummyIndex", i1)
+    result = newCall("[]", x, newCall(bindsym"automaticIndex", id1, lo1, hi1), i1)
   else:
     error "Indexing fails for: " & x.repr & "[" & i1.repr & "]"
-macro indexingEqT2I1(x, D, V: typed;
+macro indexingEqT2I1(x: typed;
                      id1, lo1, hi1, id2, lo2, hi2: int;
                      i1: typed; i1id, i1lo, i1hi: int;
                      y: typed): expr =
@@ -365,23 +335,21 @@ macro indexingEqT2I1(x, D, V: typed;
      id2.intval == i1id.intval and lo2.intval == i1lo.intval and hi2.intval == i1hi.intval:
     error "Ambiguous indexing for: " & x.repr & "[" & i1.repr & "]=" & y.repr
   elif id1.intval == i1id.intval and lo1.intval == i1lo.intval and hi1.intval == i1hi.intval:
-    result = newCall("[]=", x, i1, bindsym"UniversalDummyIndex", y)
+    result = newCall("[]=", x, i1, newCall(bindsym"automaticIndex", id2, lo2, hi2), y)
   elif id2.intval == i1id.intval and lo2.intval == i1lo.intval and hi2.intval == i1hi.intval:
-    result = newCall("[]=", x, bindsym"UniversalDummyIndex", i1, y)
+    result = newCall("[]=", x, newCall(bindsym"automaticIndex", id1, lo1, hi1), i1, y)
   else:
     error "Indexing fails for: " & x.repr & "[" & i1.repr & "]=" & y.repr
-type
-  IndexOrDummy = gTindex or gTindexDummy
-template `[]`*[D,V;id1,lo1,hi1,id2,lo2,hi2:static[int]](x: gT2[D,V,id1,lo1,hi1,id2,lo2,hi2], i1: IndexOrDummy): expr =
-  indexingT2I1(x, D, V, id1, lo1, hi1, id2, lo2, hi2, i1, i1.type.id, i1.type.lo, i1.type.hi)
-template `[]=`*[D,V;id1,lo1,hi1,id2,lo2,hi2:static[int]](x: gT2[D,V,id1,lo1,hi1,id2,lo2,hi2], i1: IndexOrDummy, y: V): expr =
-  indexingEqT2I1(x, D, V, id1, lo1, hi1, id2, lo2, hi2, i1, i1.type.id, i1.type.lo, i1.type.hi, y)
+template `[]`*[D,V;id1,lo1,hi1,id2,lo2,hi2,i1id,i1lo,i1hi:static[int],i1ty:static[TPLIndex]](x: gT2[D,V,id1,lo1,hi1,id2,lo2,hi2], i1: AnyIndex[i1ty,i1id,i1lo,i1hi]): expr =
+  indexingT2I1(x, id1, lo1, hi1, id2, lo2, hi2, i1, i1id, i1lo, i1hi)
+template `[]=`*[D,V;id1,lo1,hi1,id2,lo2,hi2,i1id,i1lo,i1hi:static[int],i1ty:static[TPLIndex]](x: gT2[D,V,id1,lo1,hi1,id2,lo2,hi2], i1: AnyIndex[i1ty,i1id,i1lo,i1hi], y: V): expr =
+  indexingEqT2I1(x, id1, lo1, hi1, id2, lo2, hi2, i1, i1id, i1lo, i1hi, y)
 
 template genUnaryOp(op: untyped): stmt =
   template op*[D,V;id1,lo1,hi1:static[int]](x: gT1[D,V,id1,lo1,hi1]): expr =
-    op(x[UniversalDummyIndex])
+    op(x[automaticIndex(id1,lo1,hi1)])
   template op*[D,V;id1,lo1,hi1,id2,lo2,hi2:static[int]](x: gT2[D,V,id1,lo1,hi1,id2,lo2,hi2]): expr =
-    op(x[UniversalDummyIndex, UniversalDummyIndex])
+    op(x[automaticIndex(id1,lo1,hi1), automaticIndex(id2,lo2,hi2)])
 
 macro genUOp(os: varargs[untyped]): stmt =
   result = newStmtList()
@@ -391,21 +359,21 @@ genUOp(`+`, `-`)
 
 template genBinaryOp(op: untyped): stmt =
   template op*[lD,lV;lid1,llo1,lhi1:static[int]](x: gT1[lD,lV,lid1,llo1,lhi1], y: lV): expr =
-    op(x[UniversalDummyIndex], y)
+    op(x[automaticIndex(lid1,llo1,lhi1)], y)
   template op*[rD,rV;rid1,rlo1,rhi1:static[int]](x: rV, y: gT1[rD,rV,rid1,rlo1,rhi1]): expr =
-    op(x, y[UniversalDummyIndex])
+    op(x, y[automaticIndex(rid1,rlo1,rhi1)])
   template op*[lD,lV,rD,rV;lid1,llo1,lhi1,rid1,rlo1,rhi1:static[int]](x: gT1[lD,lV,lid1,llo1,lhi1], y: gT1[rD,rV,rid1,rlo1,rhi1]): expr =
-    op(x[UniversalDummyIndex], y[UniversalDummyIndex])
+    op(x[automaticIndex(lid1,llo1,lhi1)], y[automaticIndex(rid1,rlo1,rhi1)])
   template op*[lD,lV;lid1,llo1,lhi1,lid2,llo2,lhi2:static[int]](x: gT2[lD,lV,lid1,llo1,lhi1,lid2,llo2,lhi2], y: lV): expr =
-    op(x[UniversalDummyIndex,UniversalDummyIndex], y)
+    op(x[automaticIndex(lid1,llo1,lhi1),automaticIndex(lid2,llo2,lhi2)], y)
   template op*[rD,rV;rid1,rlo1,rhi1,rid2,rlo2,rhi2:static[int]](x: rV, y: gT2[rD,rV,rid1,rlo1,rhi1,rid2,rlo2,rhi2]): expr =
-    op(x, y[UniversalDummyIndex,UniversalDummyIndex])
+    op(x, y[automaticIndex(rid1,rlo1,rhi1),automaticIndex(rid2,rlo2,rhi2)])
   template op*[lD,lV,rD,rV;lid1,llo1,lhi1,lid2,llo2,lhi2,rid1,rlo1,rhi1:static[int]](x: gT2[lD,lV,lid1,llo1,lhi1,lid2,llo2,lhi2], y: gT1[rD,rV,rid1,rlo1,rhi1]): expr =
-    op(x[UniversalDummyIndex,UniversalDummyIndex], y[UniversalDummyIndex])
+    op(x[automaticIndex(lid1,llo1,lhi1),automaticIndex(lid2,llo2,lhi2)], y[automaticIndex(rid1,rlo1,rhi1)])
   template op*[lD,lV,rD,rV;lid1,llo1,lhi1,rid1,rlo1,rhi1,rid2,rlo2,rhi2:static[int]](x: gT1[lD,lV,lid1,llo1,lhi1], y: gT2[rD,rV,rid1,rlo1,rhi1,rid2,rlo2,rhi2]): expr =
-    op(x[UniversalDummyIndex], y[UniversalDummyIndex,UniversalDummyIndex])
+    op(x[automaticIndex(lid1,llo1,lhi1)], y[automaticIndex(rid1,rlo1,rhi1),automaticIndex(rid2,rlo2,rhi2)])
   template op*[lD,lV,rD,rV;lid1,llo1,lhi1,lid2,llo2,lhi2,rid1,rlo1,rhi1,rid2,rlo2,rhi2:static[int]](x: gT2[lD,lV,lid1,llo1,lhi1,lid2,llo2,lhi2], y: gT2[rD,rV,rid1,rlo1,rhi1,rid2,rlo2,rhi2]): expr =
-    op(x[UniversalDummyIndex,UniversalDummyIndex], y[UniversalDummyIndex,UniversalDummyIndex])
+    op(x[automaticIndex(lid1,llo1,lhi1),automaticIndex(lid2,llo2,lhi2)], y[automaticIndex(rid1,rlo1,rhi1),automaticIndex(rid2,rlo2,rhi2)])
 
 macro genBOp(os: varargs[untyped]): stmt =
   result = newStmtList()
@@ -414,26 +382,25 @@ macro genBOp(os: varargs[untyped]): stmt =
 genBOp(`+`, `-`, `*`, `/`, `+=`, `-=`, `*=`, `/=`)
 
 template autoIndexAsgn[lD,lV;lid1,llo1,lhi1:static[int]](x: gT1[lD,lV,lid1,llo1,lhi1], y: lV): expr =
-  x[UniversalDummyIndex] = y
+  x[automaticIndex(lid1,llo1,lhi1)] = y
 template autoIndexAsgn[rD,rV;rid1,rlo1,rhi1:static[int]](x: rV, y: gT1[rD,rV,rid1,rlo1,rhi1]): expr =
-  x = y[UniversalDummyIndex]
+  x = y[automaticIndex(rid1,rlo1,rhi1)]
 template autoIndexAsgn[lD,lV,rD,rV;lid1,llo1,lhi1,rid1,rlo1,rhi1:static[int]](x: gT1[lD,lV,lid1,llo1,lhi1], y: gT1[rD,rV,rid1,rlo1,rhi1]): expr =
-  x[UniversalDummyIndex] = y[UniversalDummyIndex]
+  x[automaticIndex(lid1,llo1,lhi1)] = y[automaticIndex(rid1,rlo1,rhi1)]
 template autoIndexAsgn[lD,lV;lid1,llo1,lhi1,lid2,llo2,lhi2:static[int]](x: gT2[lD,lV,lid1,llo1,lhi1,lid2,llo2,lhi2], y: lV): expr =
-  x[UniversalDummyIndex,UniversalDummyIndex] = y
+  x[automaticIndex(lid1,llo1,lhi1),automaticIndex(lid2,llo2,lhi2)] = y
 template autoIndexAsgn[rD,rV;rid1,rlo1,rhi1,rid2,rlo2,rhi2:static[int]](x: rV, y: gT2[rD,rV,rid1,rlo1,rhi1,rid2,rlo2,rhi2]): expr =
-  x = y[UniversalDummyIndex,UniversalDummyIndex]
+  x = y[automaticIndex(rid1,rlo1,rhi1),automaticIndex(rid2,rlo2,rhi2)]
 template autoIndexAsgn[lD,lV,rD,rV;lid1,llo1,lhi1,lid2,llo2,lhi2,rid1,rlo1,rhi1:static[int]](x: gT2[lD,lV,lid1,llo1,lhi1,lid2,llo2,lhi2], y: gT1[rD,rV,rid1,rlo1,rhi1]): expr =
-  x[UniversalDummyIndex,UniversalDummyIndex] = y[UniversalDummyIndex]
+  x[automaticIndex(lid1,llo1,lhi1),automaticIndex(lid2,llo2,lhi2)] = y[automaticIndex(rid1,rlo1,rhi1)]
 template autoIndexAsgn[lD,lV,rD,rV;lid1,llo1,lhi1,rid1,rlo1,rhi1,rid2,rlo2,rhi2:static[int]](x: gT1[lD,lV,lid1,llo1,lhi1], y: gT2[rD,rV,rid1,rlo1,rhi1,rid2,rlo2,rhi2]): expr =
-  x[UniversalDummyIndex] = y[UniversalDummyIndex,UniversalDummyIndex]
+  x[automaticIndex(lid1,llo1,lhi1)] = y[automaticIndex(rid1,rlo1,rhi1),automaticIndex(rid2,rlo2,rhi2)]
 template autoIndexAsgn[lD,lV,rD,rV;lid1,llo1,lhi1,lid2,llo2,lhi2,rid1,rlo1,rhi1,rid2,rlo2,rhi2:static[int]](x: gT2[lD,lV,lid1,llo1,lhi1,lid2,llo2,lhi2], y: gT2[rD,rV,rid1,rlo1,rhi1,rid2,rlo2,rhi2]): expr =
-  x[UniversalDummyIndex,UniversalDummyIndex] = y[UniversalDummyIndex,UniversalDummyIndex]
+  x[automaticIndex(lid1,llo1,lhi1),automaticIndex(lid2,llo2,lhi2)] = y[automaticIndex(rid1,rlo1,rhi1),automaticIndex(rid2,rlo2,rhi2)]
 macro autoIndexAsgn[T](lhs: T, rhs: T): stmt =
   dbg "autoIndexAsgn <= lhs: ", lhs, TPLDebug.detail
   dbg "autoIndexAsgn <= rhs: ", rhs, TPLDebug.detail
-  var lhs = lhs
-  if lhs.kind == nnkHiddenDeref: lhs = lhs[0]
+  var lhs = lhs.unwrap
   if lhs.kind in CallNodes and $lhs[0] == "[]": # Indexing operation
     result = newNimNode(nnkBracketExpr)
     # result = newCall(ident"[]=")
@@ -441,7 +408,7 @@ macro autoIndexAsgn[T](lhs: T, rhs: T): stmt =
       result.add lhs[i]
   else:
     result = lhs
-  result = newAssignment(result, rhs)
+  result = wrappedAssign(result, rhs)
   dbg "autoIndexAsgn => ", result, TPLDebug.detail
 
 ####################
@@ -461,9 +428,9 @@ macro defTensorEq(lhs: untyped, rhs: typed): stmt =
   let rhsT = newCall(bindsym"type", rhs)
   if lhs.kind == nnkBracketExpr:
     if lhs.len > 1:
-      var tensorCall = newCall(bindsym"Tensor", rhsT, newNimNode(nnkBracket))
+      var tensorCall = newCall(bindsym"Tensor", newNimNode(nnkBracket), rhsT)
       for i in 1..<lhs.len:
-        tensorCall[2].add newCall(bindsym"type", lhs[i])
+        tensorCall[1].add newCall(bindsym"type", lhs[i])
       result[0].add newIdentDefs(lhs[0], tensorCall)
     elif lhs.len == 1:
       result[0].add newIdentDefs(lhs[0], rhsT)
@@ -528,16 +495,6 @@ proc treerepr(t: dummyTree): string {.compileTime.} =
 proc genDummyTree(n: NimNode): dummyTree =
   # echo "\n>>>> genDummyTree"
   # echo n.treerepr
-  proc isDummyType(n: NimNode): bool =
-    # echo "## isDummyType got: ", n.lisprepr
-    let t =
-      if n.kind == nnkSym: n.gettype
-      elif n.kind in CallNodes and n[0].kind == nnkSym: n[0].gettype[1]
-      else: newEmptyNode()
-    # if n.kind in CallNodes and n[0].kind == nnkSym: echo "call type: ", n[0].gettype.lisprepr
-    # echo "## dummy type check got type: ", t.repr
-    result = t.sametype gTindexDummy.gettype
-    # echo "isDummyType returns: ", result
   proc skipDummyCheck(n: NimNode, i: int): bool =
     # result = n.kind notin CallNodes + {
     #   nnkStmtList, nnkBlockStmt, nnkBracket,
@@ -552,10 +509,11 @@ proc genDummyTree(n: NimNode): dummyTree =
   proc g(n: NimNode): dummyTree =
     result.idx.init
     newseq result.branch, n.len
-    if n.isDummyType:
+    let d = n.dummyFromConverter
+    if d.kind != nnkNilLit:
       # echo "   result.idx: ", result.idx.repr
       # echo "-- dummy: ", n.lisprepr
-      result.idx.incl n
+      result.idx.incl d
       # echo "   result.idx: ", result.idx.repr
     else:
       # echo "subtree result.idx: ", result.idx.repr
@@ -576,7 +534,7 @@ const autoSumOps = ["+", "-", "*", "/"]
 proc getlhs(n: NimNode): NimNode =
   # echo "getlhs: ", n.treerepr
   if n.kind == nnkAsgn:
-    result = if n[0].kind == nnkHiddenDeref: n[0][0] else: n[0]
+    result = n[0]
   elif n.kind in CallNodes and $n[0] in autoSumFunctionNoBracket and n.len == 3:
     result = n[1]
   elif n.kind in CallNodes and $n[0] == "[]=":
@@ -601,10 +559,10 @@ proc needAutoSum(n: NimNode, t: dummyTree): bool =
 proc reAssembleBinOp(n, lhs, rhs: NimNode): NimNode =
   if n.kind == nnkAsgn or
      (n.kind in CallNodes and $n[0] == "[]=" and lhs.kind == nnkBracketExpr):
-    result = newAssignment(lhs, rhs)
+    result = wrappedAssign(lhs, rhs)
   elif n.kind in CallNodes and n.len == 3:
-    result = n.copyNimNode.add(n[0], lhs, rhs)
-    result.callNodesWrap
+    result = n.copyNimNode.add(n[0], lhs, rhs.newPar)
+    result = result.callNodesWrap
   else:
     error "Don't know how to reassemble binary op for\n" &
       n.repr & "\nfrom lhs\n" & lhs.repr & "\nand rhs\n" & rhs.repr
@@ -671,7 +629,7 @@ proc treerepr(t: ixtree): string =
       result &= "\n" & c.treerepr.indent(2)
 proc `$`(t: ixtree): string = treerepr t
 proc `$`(t: ptr ixtree): string = t.repr
-proc contractDummyU(n: NimNode): NimNode =
+proc contractAutoDummy(n: NimNode): NimNode =
   var dID {.compileTime global.} = 0
   template notEmpty(t: ixtree): bool = not t.empty
   proc empty(t: ixtree): bool =
@@ -716,17 +674,19 @@ proc contractDummyU(n: NimNode): NimNode =
         t.vT[i].markContracted s
     of ixk0:
       discard
-  proc replaceDummyU(n: NimNode): (NimNode, ixtree) =
-    if n.kind == nnkHiddenCallConv and n[1] == bindsym"UniversalDummyindex":
-      let
-        t = n[0].symbol.getimpl[3][0] # The symbol of the return type of the converter.
-        d = gensym(nskVar, "__D" & $dID & "__" & $t)
+  proc replaceAutoDummy(n: NimNode): (NimNode, ixtree) =
+    # hint n.lisprepr
+    if n.kind in CallNodes and $n[0] == "automaticIndex":
+      var t = newPar()
+      for i in 1..<n.len:
+        t.add n[i]
+      let d = gensym(nskVar, "__D" & $dID & "__" & t.dummyStr)
       inc dID
       result = (d, ixtree(kind: ixkI, vId: d, vIt: t))
     elif n.isAutoSumStmt:
       let
-        (lhs, lt) = n.getlhs.replaceDummyU
-        (rhs, rt) = n[^1].replaceDummyU
+        (lhs, lt) = n.getlhs.replaceAutoDummy
+        (rhs, rt) = n[^1].replaceAutoDummy
       result = (
         n.reAssembleBinOp(lhs, rhs),
         ixtree(kind: ixkE, vEl: lt, vEr: rt)
@@ -742,7 +702,7 @@ proc contractDummyU(n: NimNode): NimNode =
           else:
             ixtree(kind: ixkN, vN: @[])
       for c in n:
-        let (r, t) = c.replaceDummyU
+        let (r, t) = c.replaceAutoDummy
         nn.add r
         ixt.add t
       if ixt.empty:
@@ -750,8 +710,7 @@ proc contractDummyU(n: NimNode): NimNode =
       else:
         # Special rebindings here to force type check the stmt again.
         if nn.kind in CallNodes:
-          nn.callNodesWrap
-          nn.rebindIndexing
+          nn = nn.callNodesWrap.rebindIndexing
         result = (nn, ixt)
   proc alltypes(t: ixtree): seqset[NimNode] =
     result.init
@@ -988,11 +947,11 @@ proc contractDummyU(n: NimNode): NimNode =
       result.add t.matchDummyType s
   # Stitch the functions together.
   var ixt: ixtree
-  (result, ixt) = n.replaceDummyU
+  (result, ixt) = n.replaceAutoDummy
   if ixt.notempty:
-    # hint "contractDummyU:n: " & n.repr
-    # hint "contractDummyU:result: " & result.treerepr
-    # hint "contractDummyU:ixt: " & ixt.treerepr
+    # hint "contractAutoDummy:n: " & n.repr
+    # hint "contractAutoDummy:result: " & result.treerepr
+    # hint "contractAutoDummy:ixt: " & ixt.treerepr
     let reps = ixt.matchDummy
     for s in reps:
       result = result.replace s
@@ -1005,9 +964,12 @@ proc contractDummyU(n: NimNode): NimNode =
     )
     for i in ix:
       assert i.kind == ixkI
-      result[0].add newIdentDefs(i.vId, newCall(bindsym"Dummy", ident($i.vIt)))
-macro convertDummyU(n: typed): stmt =
-  dbg "convertDummyU <= ", n, TPLDebug.flow
+      var d = newCall(bindsym"DummyIxType")
+      for s in i.vIt:
+        d.add s
+      result[0].add newIdentDefs(i.vId, d)
+macro convertAutoDummy(n: typed): stmt =
+  dbg "convertAutoDummy <= ", n, TPLDebug.flow
   proc g(n: NimNode): NimNode =
     if n.kind in StmtNodes:
       result = newStmtList()
@@ -1021,9 +983,9 @@ macro convertDummyU(n: typed): stmt =
     elif n.kind in {nnkTypeSection, nnkVarSection, nnkLetSection, nnkConstSection}:
       result = n
     else:
-      result = n.contractDummyU
+      result = n.contractAutoDummy
   result = n.g
-  dbg "convertDummyU => ", result, TPLDebug.flow
+  dbg "convertAutoDummy => ", result, TPLDebug.flow
 
 template forIndexCall*[id,lo,hi:static[int]](s, f: expr, i: gTindexDummy[id,lo,hi], body: expr): stmt =
   for s in f(id, lo, hi):
@@ -1048,8 +1010,7 @@ proc dummyLoopGen(ix: seqset[NimNode], n: NimNode): NimNode =
   #   echo "dummyLoopGen:", i, ":result:\n", result.treerepr
   # echo "dummyLoopGen:final result\n", result.treerepr
 proc indexedTensor(m: NimNode): NimNode =
-  var n = m
-  if n.kind == nnkHiddenDeref: n = m[0]
+  var n = m.unwrap
   if n.kind in CallNodes and $n[0] in ["[]", "[]="]:
     result = n[1]
   elif n.kind == nnkBracketExpr:
@@ -1114,10 +1075,10 @@ macro splitLhsDuplicate(n: typed): stmt =
             # Else, for m > n, do nothing.
         result = newStmtList().add(stmtHead)
         for c in lhsTail:
-          result.add c.newAssignment stmtHead.getlhs
+          result.add c.wrappedAssign stmtHead.getlhs
       else:
         let (tt, def) = temporaryTensor(commonIx, rhs)
-        result = newStmtList().add(def, n.reAssembleBinOp(lhs, tt))
+        result = newStmtList(def, n.reAssembleBinOp(lhs, tt))
   dbg "splitLhsDuplicate => ", result, TPLDebug.detail
   # hint "<<<< splitLhsDuplicate => " & result.treerepr
 macro splitRhsSum(n: typed): stmt =
@@ -1149,8 +1110,8 @@ macro splitRhsSum(n: typed): stmt =
           if rhs[1].kind in CallNodes and $rhs[1][0] != "[]":
             if n.kind == nnkAsgn or fun == "[]=": # We reuse the lhs.
               result = newStmtList()
-              result.add lhs.newAssignment rhs[1]
-              result.add lhs.newAssignment lhs.prefix "-"
+              result.add lhs.wrappedAssign rhs[1]
+              result.add lhs.wrappedAssign lhs.prefix "-"
             elif fun == "+=":
               result = n.copy
               result[0] = bindsym"-="
@@ -1160,7 +1121,7 @@ macro splitRhsSum(n: typed): stmt =
             elif fun in ["*=", "/="]:
               result = n.copy
               result[^1] = rhs[1]
-              result = newStmtList().add(result, lhs.newAssignment lhs.prefix "-")
+              result = newStmtList(result, lhs.wrappedAssign lhs.prefix "-")
             else:
               error "AutoSum cannot handle: " & n.repr
           else:                 # For simple rhs, we do nothing.
@@ -1217,6 +1178,16 @@ proc collectTensors(n: NimNode): (seqset[NimNode], seqset[NimNode]) =
   # scalars (symbol not indexed with []) are only returned when
   # they are used as a var (lvalue).
   # echo "collectTensors:n <= # ", n.lisprepr
+  proc extractIndex(n: NimNode): NimNode =
+    if n.kind in CallNodes and $n[0] == "indexValue":
+      result = n[1]
+    else:
+      result = n
+  proc extractTensor(n: NimNode): NimNode =
+    if n.kind == nnkDotExpr and $n[1] == "data":
+      result = n[0]
+    else:
+      result = n
   var lv, vl: seqset[NimNode]
   lv.init
   vl.init
@@ -1227,12 +1198,9 @@ proc collectTensors(n: NimNode): (seqset[NimNode], seqset[NimNode]) =
     for x in b:
       vl.incl x
   if n.kind == nnkAsgn:
-    var nn = n[0]
-    while nn.kind != nnkSym:
-      if nn.kind notin {nnkBracketExpr, nnkPar, nnkHiddenDeref, nnkHiddenAddr}:
-        error "Don't know how to extract tensors from: " & nn.treerepr & "\nin: " & n.treerepr
-      else:
-        nn = nn[0]
+    var nn = n[0].unwrap
+    if nn.kind != nnkSym:
+      error "Don't know how to extract tensors from: " & nn.treerepr & "\nin: " & n.treerepr
     lv.incl newNimNode(nnkBracketExpr).add nn
     recurseAdd n[0]
     recurseAdd n[1]
@@ -1247,24 +1215,22 @@ proc collectTensors(n: NimNode): (seqset[NimNode], seqset[NimNode]) =
       for i in 1..<fp.len:            # List of params.
         let isVarParam = fp[i][^2].kind == nnkVarTy
         for j in 0..<fp[i].len-2:
-          var nkj = n[k+j]
-          while nkj.kind in {nnkPar, nnkHiddenDeref, nnkHiddenAddr, nnkHiddenStdConv}:
-            nkj = if nkj.kind == nnkHiddenStdConv: nkj[1] else: nkj[0]
+          var nkj = n[k+j].unwrap
           if nkj.kind in CallNodes + {nnkConv, nnkStmtListExpr}:
             # Don't care.
             recurseAdd nkj
-          elif nkj.kind == nnkSym:
+          elif nkj.kind in {nnkSym, nnkDotExpr}:
             var t = newNimNode(nnkBracketExpr)
             # Add the tensor symbol.
-            t.add nkj
+            t.add nkj.extractTensor
             # Add indices.
             if i == 1: # The first argument to [] or []= is the tensor.
               if $n[0] == "[]":
                 for m in 2..<n.len:
-                  t.add n[m]
+                  t.add n[m].extractIndex
               if $n[0] == "[]=":
                 for m in 2..<n.len-1:
-                  t.add n[m]
+                  t.add n[m].extractIndex
             if isVarParam:
               lv.incl t
             else:
@@ -1283,12 +1249,17 @@ proc collectTensors(n: NimNode): (seqset[NimNode], seqset[NimNode]) =
       error "Don't know how to extract tensors from: " & n.treerepr
   elif n.kind == nnkBracketExpr:
     var t = n.copy
-    if n[0].kind == nnkHiddenAddr and n[0][0].kind == nnkSym:
-      t[0] = t[0][0]
+    for i in 1..<t.len:
+      t[i] = t[i].extractIndex
+    if n[0].kind in {nnkHiddenAddr, nnkHiddenDeref} and n[0][0].kind in {nnkSym, nnkDotExpr}:
+      # FIXME: this check may no longer work if getlhs removes these hidden nodes.
+      t[0] = t[0][0].extractTensor
       lv.incl t
-    elif n[0].kind == nnkSym:
+    elif n[0].kind in {nnkSym, nnkDotExpr}:
+      t[0] = t[0].extractTensor
       vl.incl t
     elif n[0].kind in CallNodes:
+      t[0] = t[0].extractTensor
       var fp = n[0][0].symbol.getimpl[3]
       if fp[0].kind == nnkVarTy: # Return a var (lvalue).
         lv.incl t
@@ -1313,8 +1284,8 @@ proc conflictTensor(xs: seqset[NimNode], rs: varargs[seqset[NimNode]]): bool =
       if x[0] == y[0] and x != y:
         return true
     return false
-  # echo "conflictTensor:xs: ", xs.repr
-  # echo "conflictTensor:rs: ", rs.repr
+  # hint "conflictTensor:xs: " & xs.repr
+  # hint "conflictTensor:rs: " & rs.repr
   for x in xs:
     for r in rs:
       if x.g r:
@@ -1339,6 +1310,8 @@ proc addRequiredTemporary(n: NimNode): NimNode =
       commonIx = rhsIx - rhsLocalIx
       (lhsl, lhsr) = lhs.collectTensors
       (rhsl, rhsr) = rhs.collectTensors
+    # hint "Variables in: " & lhs.repr & "\nwith lvalue: " & lhsl.repr & "\nand rest: " & lhsr.repr
+    # hint "Variables in: " & rhs.repr & "\nwith lvalue: " & rhsl.repr & "\nand rest: " & rhsr.repr
     if lhsl.conflictTensor(rhsl, rhsr, lhsr) or
        (needAutoSum(n, t) and fun in ["*=", "/="]):
       let (tt, def) = temporaryTensor(commonIx, rhs)
@@ -1361,8 +1334,9 @@ macro requireTemporary(n: typed): stmt =
       result = n.addRequiredTemporary
   result = n.g
 proc accumulateAutoSum(n: NimNode): NimNode =
-  # echo "\n>>>> accumulateAutoSum <= ", n.repr
+  # echo "\n>>>> accumulateAutoSum <= ", n.treerepr
   let t = n.genDummyTree
+  # echo t.treerepr
   if n.needAutoSum t:
     let
       fun = if n.kind == nnkAsgn: "" else: $n[0]
@@ -1429,7 +1403,7 @@ macro splittingHelper(n: typed): stmt =
       # if n.kind == nnkInfix and n[0].kind == nnkSym:
       if n.kind in CallNodes:
         # result[0] = ident($result[0])
-        result.callNodesWrap
+        result = result.callNodesWrap
       result = getast splits result
     # echo "## splittingHelper:g => ", result.treerepr
   # result = bindsym"splitReqTemp".g bindsym"splitRhsSum".g bindsym"splitLhsDuplicate".g n
@@ -1464,6 +1438,9 @@ proc loopDummy(n: NimNode): NimNode =
     rhsLocalIx = t.idx - lhsIx
     lhsLocalIx = t.idx - rhsIx
     commonIx = rhsIx - rhsLocalIx
+  # echo "loopDummy:\n", t.treerepr
+  # for i in t.idx:
+  #   echo i.lisprepr
   # echo "AllIx: ", t.idx.repr
   # echo "lhsIx: ", lhsIx.repr
   # echo "rhsIx: ", rhsIx.repr
@@ -1562,9 +1539,7 @@ proc isFirstAssignedTo(x, n: NimNode): bool =
       if c.kind == nnkSym and c == x:
         return -1
       elif c.kind == nnkAsgn:
-        var lhs = c[0]
-        while lhs.kind in {nnkPar, nnkHiddenDeref, nnkHiddenAddr}:
-          lhs = lhs[0]
+        var lhs = c[0].unwrap
         if lhs == x:
           return 1
         else:
@@ -1643,7 +1618,7 @@ macro fusionHelper(n: typed): stmt =
             forBody.add sndBody
           for j in 0..<forBody.len: # Still need to make it recheck types.
             if forBody[j].kind in CallNodes:
-              forBody[j].callNodesWrap
+              forBody[j] = forBody[j].callNodesWrap
           forstmt.add forBody.g
           result.add forstmt
           inc i, 2
@@ -1651,7 +1626,7 @@ macro fusionHelper(n: typed): stmt =
           result.add fst.g
           if result[^1].kind in CallNodes: # Force type recheck.
             result[^1] = result[^1].copy
-            result[^1].callNodesWrap
+            result[^1] = result[^1].callNodesWrap
           inc i
     elif n.kind == nnkBlockStmt:
       result = newBlockstmt(n[0], n[1].g)
@@ -1664,7 +1639,7 @@ macro fusionHelper(n: typed): stmt =
         result.add n[j]
       if n[^1].kind in CallNodes: # Force type recheck.
         result.add n[^1].copy   # We don't change n.
-        result[^1].callNodesWrap
+        result[^1] = result[^1].callNodesWrap
       else:
         result.add n[^1].g
     else:
@@ -1688,7 +1663,7 @@ template tensorOpsHelper(v: TPLDebug, n: untyped): stmt =
   cleanup:
     withDbgLevel TPLDebug(v):
       showCallResult:
-        fusion cleanup looping autoSum requireTemporary splitting convertDummyU reAssign n
+        fusion cleanup looping autoSum requireTemporary splitting convertAutoDummy reAssign n
 proc tensorOpsWithDbgLevel(v: TPLDebug, n: NimNode): NimNode =
   if n.kind in RoutineNodes:
     result = n
@@ -1707,7 +1682,7 @@ proc `$`*[D,V;id1,lo1,hi1:static[int]](v: gT1[D,V,id1,lo1,hi1]): string {.tensor
   result = "["
   if true:                    # This would put them in the same loops.
     result &= " " & $v[i]
-    if i < i.type.hi:
+    if i < hi1:
       result &= ","
   result &= " ]"
 proc `$`*[D,V;id1,lo1,hi1,id2,lo2,hi2:static[int]](m: gT2[D,V,id1,lo1,hi1,id2,lo2,hi2]): string {.tensorOpsSilent.} =
@@ -1717,24 +1692,24 @@ proc `$`*[D,V;id1,lo1,hi1,id2,lo2,hi2:static[int]](m: gT2[D,V,id1,lo1,hi1,id2,lo
   var
     i: I1.Dummy
     j: I2.Dummy
-    ws: Tensor(int, [I1])
-    xs: Tensor(string, [I1, I2])
+    ws: Tensor([I1], int)
+    xs: Tensor([I1, I2], string)
   result = ""
   xs[i,j] = $m[i,j]
   if ws[i] < xs[i,j].len:
     ws[i] = xs[i,j].len
   if true:
-    if i == i.type.lo:
-      if j == j.type.lo:
+    if i == lo1:
+      if j == lo2:
         result &= "[["
       else:
         result &= "\n ["
     result &= " " & xs[i,j] & spaces(ws[i] - xs[i,j].len)
-    if i < i.type.hi:
+    if i < hi1:
       result &= ","
     else:
       result &= " ]"
-      if j < j.type.hi:
+      if j < hi2:
         result &= ","
       else:
         result &= "]"

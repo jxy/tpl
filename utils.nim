@@ -6,29 +6,49 @@ const StmtNodes* = {nnkStmtList, nnkStmtListExpr}
 iterator pairs*(n: NimNode): (int, NimNode) =
   for i in 0..<n.len:
     yield(i, n[i])
-proc unwrap(n: NimNode): NimNode =
+proc unwrap*(n: NimNode): NimNode =
   result = n
-  while result.kind in {nnkPar, nnkHiddenDeref, nnkHiddenAddr}:
-    result = result[0]
-template rebindIndexing*(n: expr): stmt =
-  var nn = n
-  if $nn[0] == "[]":
-    var brk = newNimNode(nnkBracketExpr)
-    for i in 1..<nn.len:
-      brk.add unwrap(nn[i])
-    n = brk
-  elif $nn[0] == "[]=":
-    var brk = newNimNode(nnkBracketExpr)
-    for i in 1..<nn.len-1:
-      brk.add unwrap(nn[i])
-    n = newAssignment(brk, nn[nn.len-1])
+  while result.kind in {nnkPar, nnkHiddenDeref, nnkHiddenAddr, nnkHiddenStdConv}:
+    result = if result.kind == nnkHiddenStdConv: result[1] else: result[0]
 
-template callNodesWrap*(n: expr): stmt =
-  let nn = n
-  if nn.len > 1:
-    for i in 1..<nn.len:
-      if nn[i].kind notin AtomicNodes + {nnkPar}:
-        n[i] = nn[i].newPar
+proc wrappedAssign*(lhs, rhs: NimNode): NimNode =
+  if lhs.kind == nnkBracketExpr:
+    for i in 0..<lhs.len:
+      lhs[i] = lhs[i].newPar
+  result = newAssignment(lhs, rhs.newPar)
+
+proc rebindIndexing*(n: NimNode): NimNode =
+  if $n[0] == "[]":
+    result = newNimNode(nnkBracketExpr)
+    for i in 1..<n.len:
+      result.add n[i].unwrap.newPar
+  elif $n[0] == "[]=":
+    result = newNimNode(nnkBracketExpr)
+    for i in 1..<n.len-1:
+      result.add n[i].unwrap.newPar
+    result = result.wrappedAssign n[^1]
+  else:
+    result = n
+
+proc callNodesWrap*(n: NimNode): NimNode =
+  # hint "callNodesWrap <= " & n.treerepr
+  result = n
+  if result[^1].kind == nnkHiddenStdConv:
+    let nn = result[^1][1].copy
+    if nn.kind == nnkBracket:   # A vararg
+      result.del(result.len-1)
+      for c in nn:
+        if c.kind == nnkHiddenCallConv:
+          result.add c[1]
+        else:
+          result.add c
+    else:
+      result[^1] = nn
+  if result.len > 1:
+    for i in 1..<result.len:
+      if result[i].kind notin AtomicNodes + {nnkPar}:
+        result[i] = unwrap(result[i]).newPar
+  # hint "callNodesWrap => " & result.treerepr
 
 proc replace*(n: NimNode, i: NimNode, j: NimNode): NimNode =
   # echo "\n>>>> replace"
@@ -76,29 +96,23 @@ proc convert*(n: NimNode, i: NimNode, j: NimNode): NimNode =
       # just in case something breaks because of nnkHiddenAddr.
       result.nn = result.nn[0]
     ]#
-    if result.nn.kind == nnkHiddenCallConv:
-      # simply ask the compiler to do the call conv again
-      result.nn = result.nn[1]
+    # The compiler wouldn't simply do the call conv again.
+    # if result.nn.kind == nnkHiddenCallConv:
+    #   # simply ask the compiler to do the call conv again
+    #   result.nn = result.nn[1]
     # echo "## ", result.rep, " : ", result.nn.lisprepr
     if result.rep:
-      for i, c in result.nn:
-        if c.kind == nnkHiddenStdConv:
-          let nnn = c[1].copy
-          if nnn.kind == nnkBracket and i == result.nn.len-1:
-            result.nn.del(i)
-            for c in nnn:
-              result.nn.add c
-          else:
-            result.nn[i] = nnn
-      if result.nn.kind in CallNodes:
-        result.nn.callNodesWrap
+      if result.nn.kind == nnkHiddenCallConv:
+        result.nn = result.nn[1]
+      elif result.nn.kind in CallNodes:
+        result.nn = result.nn.callNodesWrap.rebindIndexing
         # Make every sym ident would break generic function definitions.
         # result.nn[0] = ident($result.nn[0].symbol)
         # Limiting to indexing op only, may break with other replacment.
-        result.nn.rebindIndexing
       # elif result.nn.kind in {nnkHiddenDeref, nnkHiddenAddr}:
       #   result.nn = if result.nn[0].kind == nnkPar: result.nn[0] else: result.nn[0].newPar
       elif result.nn.kind == nnkConv:
+        # Deals with explicit converter, such as `int`, `float`.
         # echo result.nn.treerepr
         # result.nn[0] = ident($result.nn[0])
         var nnn = newCall(ident($result.nn[0].symbol))
@@ -133,8 +147,11 @@ proc dummyStr*(n: NimNode): string =
     if s[i] in IdentChars - {'_'}:
       id[j] = s[i]
       inc j
-    elif j > 1 and id[j-1] != '_':
+    elif j > 0 and id[j-1] != '_':
       id[j] = '_'
       inc j
-  if j != s.len: id.setLen j
+  if id[j-1] == '_':
+    dec j
+  if j != s.len:
+    id.setLen j
   return id
