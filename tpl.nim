@@ -93,15 +93,21 @@ proc `$`*[id,lo,hi:static[int]](x: gTindex[id,lo,hi]): string =
 
 var IndexID {.compileTime.} = 0
 macro IndexType*(lo, hi: static[int]): expr =
+  if hi < lo:
+    error "IndexType got upper bound: " & $hi & ", lower than the lower bound: " & $lo
   result = newNimNode(nnkBracketExpr).add(
     bindsym"gTindexUninitialized", IndexId.newlit, lo.newlit, hi.newlit)
   inc IndexId
   # hint "IndexType => " & result.lisprepr
+template IndexType*(size: static[int]): expr =
+  when size <= 0:
+    error "IndexType got nonpositive size: " & $size
+  IndexType(0, size-1)
 
 template staticInbound(n, lo, hi: static[int]): expr =
   static:
     if n < lo or n > hi:
-      error "index out of bounds: " & $n
+      error "index, " & $n & ", out of bounds [" & $lo & "," & $hi & "]"
 
 proc indexValue[id,lo,hi:static[int]](ix: gTindex[id,lo,hi]): int {.inline.} = ix.value
 
@@ -427,6 +433,13 @@ macro autoIndexAsgn[T](lhs: T, rhs: T): stmt =
     result = lhs
   result = wrappedAssign(result, rhs)
   dbg "autoIndexAsgn => ", result, TPLDebug.detail
+macro autoIndexAsgn[id,lo,hi:static[int]](lhs: gTindex[id,lo,hi], rhs: int): stmt =
+  dbg "autoIndexAsgn <= lhs: ", lhs, TPLDebug.detail
+  dbg "autoIndexAsgn <= rhs: ", rhs, TPLDebug.detail
+  template ixeq(ix: expr, n: expr): stmt =
+    ix.index = n
+  result = getast ixeq(lhs, rhs)
+  dbg "autoIndexAsgn => ", result, TPLDebug.detail
 
 ####################
 # tensor ops
@@ -583,8 +596,16 @@ proc reAssembleBinOp(n, lhs, rhs: NimNode): NimNode =
       n.repr & "\nfrom lhs\n" & lhs.repr & "\nand rhs\n" & rhs.repr
 
 proc rebindAssignment(n: NimNode): NimNode =
+  template g(la, lb, rhs): stmt =
+    when compiles(`lb =`(la, rhs)):
+      `lb =`(la, rhs)
+    else:
+      autoIndexAsgn(la.lb, rhs)
   if n.kind == nnkAsgn:
-    result = newCall(bindsym"autoIndexAsgn", n[0], n[1])
+    if n[0].kind == nnkDotExpr:
+      result = getast g(n[0][0], n[0][1], n[1])
+    else:
+      result = newCall(bindsym"autoIndexAsgn", n[0], n[1])
   else:
     result = n
 macro reAssign(n: untyped): stmt =
@@ -594,6 +615,10 @@ macro reAssign(n: untyped): stmt =
       result = newStmtList()
       for i in 0..<n.len:
         result.add n[i].g
+    elif n.kind in CallNodes:
+      result = n
+      for i in 1..<n.len:
+        result[i] = n[i].g
     elif n.kind == nnkBlockStmt:
       result = newBlockstmt(n[0], n[1].g)
     elif n.kind in RoutineNodes:
