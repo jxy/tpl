@@ -7,6 +7,8 @@ type
 proc newseqdict*[K,V]: seqdict[K,V] =
   result.keys.newseq(0)
   result.values.newseq(0)
+proc contains*[K,V](d: seqdict[K,V], k: K): bool =
+  d.keys.contains k
 proc `[]`*[K,V](d: seqdict[K,V], k: K): V =
   var ix = -1
   for i, x in d.keys:

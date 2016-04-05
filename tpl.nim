@@ -471,6 +471,28 @@ macro autoIndexAsgn[id,lo,hi:static[int]](lhs: gTindex[id,lo,hi], rhs: int): stm
   dbg "autoIndexAsgn => ", result, TPLDebug.detail
 
 ####################
+# special tensors
+
+const
+  TPL_complex = -1
+type
+  Complex* = gTindexUninitialized[TPL_complex, 0, 1]
+# Complex multiplication is defined as:
+# x_a = TPLComplexCoeff_abc y_b z_c
+const
+  TPL_Complex_Coeff = [
+    [[1.0, 0.0], [0.0, -1.0]],
+    [[0.0, 1.0], [1.0,  0.0]]
+  ]
+template complexCoefficient(a, b, c: int): float =
+  TPL_Complex_Coeff[a][b][c]
+proc complexCoeff(a, b, c: NimNode): NimNode =
+  result = getast complexCoefficient(
+    newCall(bindsym"indexValue", a),
+    newCall(bindsym"indexValue", b),
+    newCall(bindsym"indexValue", c))
+
+####################
 # tensor ops
 proc newTensorAssign(lhs, rhs: NimNode): NimNode =
   # Use `+=`, assuming new tensors are initialized with 0.
@@ -510,11 +532,13 @@ macro staticforbody(i: untyped, j: int, t: typed, n: untyped): untyped =
   # echo result.repr
   # echo "<<<< staticfor"
 template staticforindex*[ty:static[TPLIndex];id,lo,hi:static[int]](i: untyped, t: typedesc[AnyIndex[ty,id,lo,hi]], n: untyped): expr =
-  unrollfor j, lo, hi:
-    staticforbody(i, j, t, n)
+  when hi >= lo:
+    unrollfor j, lo, hi:
+      staticforbody(i, j, t, n)
+  else:
+    error "Unsupported statict for index " & i.repr & " of type " & $t & " in " & n.repr
 template staticforindex*[ty:static[TPLIndex];id,lo,hi:static[int]](i: untyped, t: AnyIndex[ty,id,lo,hi], n: untyped): expr =
-  unrollfor j, lo, hi:
-    staticforbody(i, j, type(t), n)
+  staticforindex(i, type(t), n)
 macro staticforstmt*(n: typed): untyped =
   # echo "\n>>>> staticforstmt"
   # echo n.treerepr
@@ -674,8 +698,9 @@ type
       con: bool         # if contracted
     of ixkE: vEl, vEr: ixtree  # lhs and rhs
     of ixkM:
-      vM: seq[ixtree]   # operands of `*`
-      nn: NimNode       # The node (wrapped in a Par) of this `*` op.
+      vM: seq[ixtree]           # operands of `*`
+      nn: NimNode               # Identify this `*` op.
+      scon: NimNode             # Special contraction expr to `*`.
     of ixkT: vT: seq[ixtree]   # indexing of a tensor
     of ixkN: vN: seq[ixtree]   # Other NimNode
     of ixk0: discard           # Empty
@@ -691,7 +716,7 @@ proc treerepr(t: ixtree): string =
       rhs = t.vEr.treerepr.indent(2)
     result = "Eq\n" & lhs & "\n" & rhs
   of ixkM:
-    result = "Mu: " & t.nn.repr
+    result = "Mu: " & t.nn.lisprepr & "  scon: " & t.scon.repr
     for c in t.vM:
       result &= "\n" & c.treerepr.indent(2)
   of ixkT:
@@ -706,6 +731,25 @@ proc `$`(t: ixtree): string = treerepr t
 proc `$`(t: ptr ixtree): string = t.repr
 proc contractAutoDummy(n: NimNode): NimNode =
   var dID {.compileTime global.} = 0
+  proc newDummySym(n: NimNode): NimNode =
+    result = nskVar.gensym "__D" & $dID & "__" & n.dummyStr
+    inc dID
+  let multWrap = ident"__TPL_internal_MultWrap__"
+  var mID {.compileTime global.} = 0
+  proc wrapMult(n: NimNode): NimNode =
+    result = newCall(multWrap, mID.newlit, n)
+    inc mID
+  proc unwrapMult(n: NimNode, s: seqdict[NimNode, NimNode]): NimNode =
+    if n.kind in CallNodes and n[0] == multWrap:
+      let m = n[1]
+      if m in s:
+        result = newCall(bindsym"*", s[m], n[2].unwrapMult s).callNodesWrap
+      else:
+        result = n[2].unwrapMult s
+    else:
+      result = n
+      for i in 0..<result.len:
+        result[i] = result[i].unwrapMult s
   template notEmpty(t: ixtree): bool = not t.empty
   proc empty(t: ixtree): bool =
     case t.kind
@@ -755,8 +799,7 @@ proc contractAutoDummy(n: NimNode): NimNode =
       var t = newPar()
       for i in 1..<n.len:
         t.add n[i]
-      let d = gensym(nskVar, "__D" & $dID & "__" & t.dummyStr)
-      inc dID
+      let d = t.newDummySym
       result = (d, ixtree(kind: ixkI, vId: d, vIt: t))
     elif n.isAutoSumStmt:
       let
@@ -771,7 +814,7 @@ proc contractAutoDummy(n: NimNode): NimNode =
         nn = n.copyNimNode
         ixt =
           if n.kind in CallNodes and $n[0] == "*":
-            ixtree(kind: ixkM, vM: @[])
+            ixtree(kind: ixkM, vM: @[], scon: newEmptyNode())
           elif n.kind == nnkBracketExpr or (n.kind in CallNodes and $n[0] == "[]"):
             ixtree(kind: ixkT, vT: @[])
           else:
@@ -787,8 +830,10 @@ proc contractAutoDummy(n: NimNode): NimNode =
         if nn.kind in CallNodes:
           nn = nn.callNodesWrap.rebindIndexing
         if ixt.kind == ixkM:
-          ixt.nn = nn.newPar
-        result = (nn, ixt)
+          result = (nn.wrapMult, ixt)
+          ixt.nn = result[0][1]
+        else:
+          result = (nn, ixt)
   proc alltypes(t: ixtree): seqset[NimNode] =
     result.init
     case t.kind
@@ -827,6 +872,24 @@ proc contractAutoDummy(n: NimNode): NimNode =
       for s in t.vN:
         result.add s.collectDummy
     of ixk0:
+      discard
+  proc collectSpecials(n: var seqdict[NimNode, NimNode], t: ixtree) =
+    case t.kind
+    of ixkE:
+      n.collectSpecials t.vEl
+      n.collectSpecials t.vEr
+    of ixkM:
+      for s in t.vM:
+        n.collectSpecials s
+      if t.scon.kind != nnkEmpty:
+        n.add(t.nn, t.scon)
+    of ixkT:
+      for s in t.vT:
+        n.collectSpecials s
+    of ixkN:
+      for s in t.vN:
+        n.collectSpecials s
+    else:
       discard
   type
     rpair = tuple
@@ -899,7 +962,7 @@ proc contractAutoDummy(n: NimNode): NimNode =
   proc contractMul(t: var ixtree, s: NimNode): replacePairs =
     # We contract nearby indices of tensors multiplied together.
     # hint "contractMul:t: " & t.treerepr
-    # hint "contractMul:s: " & $s
+    # hint "contractMul:s: " & s.lisprepr
     result.init
     case t.kind:
     of ixkM:
@@ -907,16 +970,37 @@ proc contractAutoDummy(n: NimNode): NimNode =
       for i in 0..<t.vM.len:
         result.add t.vM[i].contractMul s
         ixlist[i] = t.vM[i].noncontractedIx s
-      for i in 1..<ixlist.len:
-        if ixlist[i].len > 0:
-          for prevI in countdown(i-1, 0):
-            if ixlist[prevI].len > 0:
-              result.add((ixlist[i][0], ixlist[prevI][^1]))
-              t.vM[i].markContracted ixlist[i][0]
-              ixlist[i].del 0
-              t.vM[prevI].markContracted ixlist[prevI][^1]
-              ixlist[prevI].del(ixlist[prevI].len-1)
-              break
+      if s[0].intval == TPL_complex:
+        if t.vM.len != 2:
+          warning t.treerepr
+          error "Complex contraction only implemented for the dyadic multiplication."
+        if ixlist[1].len > 0 and ixlist[0].len > 0:
+          let
+            o = newDummySym(s)
+            lo = newDummySym(s)
+            ro = newDummySym(s)
+          t.vM[0].markContracted ixlist[0][^1]
+          t.vM[1].markContracted ixlist[1][0]
+          result.add((ixlist[0][^1], lo))
+          result.add((ixlist[1][0], ro))
+          t.vM.insert(ixtree(kind: ixkT, vT: @[]), 1)
+          t.vM[1].add ixtree(kind: ixkI, vId: o, vIt: s, con: false)
+          t.vM[1].add ixtree(kind: ixkI, vId: lo, vIt: s, con: true)
+          t.vM[1].add ixtree(kind: ixkI, vId: ro, vIt: s, con: true)
+          t.scon = complexCoeff(o, lo, ro)
+        # Since we are not looping over multiple operands, we
+        # don't need to change ixlist.
+      else:
+        for i in 1..<ixlist.len:
+          if ixlist[i].len > 0:
+            for prevI in countdown(i-1, 0):
+              if ixlist[prevI].len > 0:
+                result.add((ixlist[i][0], ixlist[prevI][^1]))
+                t.vM[i].markContracted ixlist[i][0]
+                ixlist[i].del 0
+                t.vM[prevI].markContracted ixlist[prevI][^1]
+                ixlist[prevI].del(ixlist[prevI].len-1)
+                break
     of ixkT:
       for i in 0..<t.vT.len:
         result.add t.vT[i].contractMul s
@@ -1027,9 +1111,12 @@ proc contractAutoDummy(n: NimNode): NimNode =
   (result, ixt) = n.replaceAutoDummy
   if ixt.notempty:
     # hint "contractAutoDummy:n: " & n.repr
-    # hint "contractAutoDummy:result: " & result.treerepr
+    # hint "contractAutoDummy:result: " & result.repr
     # hint "contractAutoDummy:ixt: " & ixt.treerepr
     let reps = ixt.matchDummy
+    var specialContractions = newseqdict[NimNode, NimNode]()
+    specialContractions.collectSpecials ixt
+    result = result.unwrapMult specialContractions
     for s in reps:
       result = result.replace s
     let ix = ixt.collectDummy.rmReplaced reps
@@ -1045,6 +1132,9 @@ proc contractAutoDummy(n: NimNode): NimNode =
       for s in i.vIt:
         d.add s
       result[0].add newIdentDefs(i.vId, newEmptyNode(), d)
+    # hint "    --------------------"
+    # hint "contractAutoDummy:result: " & result.repr
+    # hint "contractAutoDummy:ixt: " & ixt.treerepr
 macro convertAutoDummy(n: typed): stmt =
   dbg "convertAutoDummy <= ", n, TPLDebug.flow
   proc g(n: NimNode): NimNode =
@@ -1293,6 +1383,9 @@ proc collectTensors(n: NimNode): (seqset[NimNode], seqset[NimNode]) =
         let isVarParam = fp[i][^2].kind == nnkVarTy
         for j in 0..<fp[i].len-2:
           var nkj = n[k+j].unwrap
+          let errmsg = "Don't know how to extract tensors from: " &
+            n.treerepr & "\nwith: " & fp.treerepr &
+            "\nlooking at: " & nkj.treerepr
           if nkj.kind in CallNodes + {nnkConv, nnkStmtListExpr}:
             # Don't care.
             recurseAdd nkj
@@ -1317,10 +1410,16 @@ proc collectTensors(n: NimNode): (seqset[NimNode], seqset[NimNode]) =
                 nkj[0].kind == nnkSym and
                 $nkj[0].gettype[0] == "typeDesc"):
             discard "We don't need to worry about these."
+          elif nkj.kind == nnkBracketExpr:
+            var nn = nkj[0]
+            while nn.kind == nnkBracketExpr:
+              nn = nn[0]
+            if nn.kind == nnkSym and nn.symbol.getimpl.kind == nnkBracket:
+              discard "It may be an array constant.  Ignore."
+            else:
+              error errmsg
           else:
-            error "Don't know how to extract tensors from: " &
-              n.treerepr & "\nwith: " & fp.treerepr &
-              "\nlooking at: " & nkj.treerepr
+            error errmsg
         k.inc(fp[i].len-2)
     else:
       error "Don't know how to extract tensors from: " & n.treerepr
