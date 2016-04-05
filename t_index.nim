@@ -2,9 +2,8 @@ import tpl
 import unittest
 
 proc main {.tensorOpsSilent.} =
-  type
-    I = IndexType(3)
-    J = IndexType(1,2)
+  I = IndexType(3)
+  J = IndexType(1,2)
   var
     i = I.index 2
     j = J.index 1

@@ -1,8 +1,9 @@
 import unittest
 import tpl
 
-type
+tensorOpsSilent:
   Ix = IndexType(0,2)
+type
   V = Tensor([Ix], float)
   M = Tensor([Ix, Ix], float)
 var

@@ -1,8 +1,9 @@
 import tpl
 
-type
+tensorOpsSilent:
   S = IndexType(0,1)
   C = IndexType(0,2)
+type
   SV = Tensor([S], float)
   SM = Tensor([S,S], float)
   CV = Tensor([C], float)

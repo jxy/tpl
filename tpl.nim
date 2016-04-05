@@ -1,5 +1,6 @@
 import macros
 import seqset
+import seqdict
 import utils
 import tensor_data_default
 import strutils
@@ -68,46 +69,92 @@ type
   gTindex[id,lo,hi:static[int]] = AnyIndex[TPLIndex.index,id,lo,hi]
 converter idx2int*[id,lo,hi:static[int]](i: gTindex[id,lo,hi]): int = i.value
 converter idx2float*[id,lo,hi:static[int]](i: gTindex[id,lo,hi]): float = i.value.float
-iterator indices(id, lo, hi: static[int]): gTindex[id,lo,hi] =
-  const
-    cid = id
-    clo = lo
-    chi = hi
-  var i = gTindex[cid,clo,chi](value: lo)
-  while true:
-    yield i
-    if i.value == hi: break
-    inc i.value
-iterator items*[ty:static[TPLIndex];id,lo,hi:static[int]](t: typedesc[AnyIndex[ty,id,lo,hi]]): gTindex[id,lo,hi] =
-  const
-    cid = id
-    clo = lo
-    chi = hi
-  var i = gTindex[cid,clo,chi](value: lo)
-  while true:
-    yield i
-    if i.value == hi: break
-    inc i.value
-proc `$`*[id,lo,hi:static[int]](x: gTindex[id,lo,hi]): string =
-  $x.value & ":Idx[" & $id & "," & $lo & "," & $hi & "]"
 
-var IndexID {.compileTime.} = 0
-macro IndexType*(lo, hi: static[int]): expr =
+var IndexLength {.compileTime.} = newseqdict[int, NimNode]()
+macro savedIndexLength(n: static[int]): expr =
+  result = IndexLength[n]
+template iterateIndices(id, lo, hi, begin: static[int]): stmt =
+  const
+    cid = id
+    clo = lo
+    chi = hi
+    cbegin = begin
+  when chi < clo:
+    let upper = savedIndexLength(cid)
+    if cbegin <= upper:
+      var i = gTindex[cid,clo,chi](value: cbegin)
+      while true:
+        yield i
+        if i.value == upper: break
+        inc i.value
+  else:
+    when cbegin <= chi:
+      var i = gTindex[cid,clo,chi](value: cbegin)
+      while true:
+        yield i
+        if i.value == chi: break
+        inc i.value
+template iterateIndices(id, lo, hi: static[int]): stmt =
+  iterateIndices(id, lo, hi, lo)
+iterator indices(id, lo, hi: static[int]): gTindex[id,lo,hi] =
+  iterateIndices(id, lo, hi)
+iterator items*[ty:static[TPLIndex];id,lo,hi:static[int]](t: typedesc[AnyIndex[ty,id,lo,hi]]): gTindex[id,lo,hi] =
+  iterateIndices(id, lo, hi)
+
+proc `$`*[id,lo,hi:static[int]](x: gTindex[id,lo,hi]): string =
+  when hi < lo:
+    $x.value & ":IdxV[" & $id & "," & $lo & "," & $savedIndexLength(id) & "]"
+  else:
+    $x.value & ":Idx[" & $id & "," & $lo & "," & $hi & "]"
+
+template uninitializedIndex(t: untyped, id, lo, hi: static[int]): expr =
+  const
+    ci = id
+    cl = lo
+    ch = hi
+  type t = gTindexUninitialized[ci, cl, ch]
+macro indexTypeStatic(t: untyped, id, lo, hi: static[int]): expr =
   if hi < lo:
     error "IndexType got upper bound: " & $hi & ", lower than the lower bound: " & $lo
-  result = newNimNode(nnkBracketExpr).add(
-    bindsym"gTindexUninitialized", IndexId.newlit, lo.newlit, hi.newlit)
-  inc IndexId
-  # hint "IndexType => " & result.lisprepr
-template IndexType*(size: static[int]): expr =
-  when size <= 0:
-    error "IndexType got nonpositive size: " & $size
-  IndexType(0, size-1)
+  result = newCall(bindsym"uninitializedIndex", t, id.newlit, lo.newlit, hi.newlit)
+  # echo "indexTypeStatic: ",  result.repr
+macro indexTypeVar(t: untyped, id, lo: static[int], hi: int): expr =
+  let vlen = gensym(nskVar, "__varIndexLength__" & $id & "__" & $lo)
+  result = newNimNode(nnkStmtListExpr).add(
+    newNimNode(nnkVarSection).add(
+      newIdentDefs(
+        newNimNode(nnkPragmaExpr).add(vlen, newNimNode(nnkPragma).add(ident"global")),
+        ident"int")),
+    newAssignment(vlen, hi),
+    newCall(bindsym"uninitializedIndex", t, id.newlit, lo.newlit, (lo - 1).newlit))
+  IndexLength.add(id, vlen)
+  # echo "indexTypeVar: ", result.repr
+  # echo IndexLength.repr
+template genIndexType(t: untyped, id, lo, hi: int): expr =
+  when compiles((const x = hi)):
+    indexTypeStatic(t, id, lo, hi)
+  else:
+    indexTypeVar(t, id, lo, hi)
+var IndexID {.compileTime.} = 0
+macro newIndexID: expr =
+  result = IndexID.newlit
+  # echo "######## newIndexID: ", result.repr
+  inc IndexID
+template IndexTypeDef(t, lo, hi: untyped): expr =
+  # echo "IndexType: <= ", lo.repr, ", ", hi.repr
+  genIndexType(t, newIndexID(), lo, hi)
+template IndexTypeDef(t, size: untyped): expr =
+  # echo "IndexType: <= ", size.repr
+  IndexTypeDef(t, 0, size - 1)
 
 template staticInbound(n, lo, hi: static[int]): expr =
   static:
-    if n < lo or n > hi:
-      error "index, " & $n & ", out of bounds [" & $lo & "," & $hi & "]"
+    when hi < lo:
+      when n < lo:
+        error "index, " & $n & ", lower than the lower bound: " & $lo
+    else:
+      when n < lo or n > hi:
+        error "index, " & $n & ", out of bounds [" & $lo & "," & $hi & "]"
 
 proc indexValue[id,lo,hi:static[int]](ix: gTindex[id,lo,hi]): int {.inline.} = ix.value
 
@@ -303,31 +350,13 @@ proc dummyIx(id,lo,hi: static[int]): gTindexDummy[id,lo,hi] =
   result = type(result)(value: lo)
 
 iterator items*[id,lo,hi:static[int]](t: gTindexDummy[id,lo,hi]): gTindex[id,lo,hi] =
-  const
-    cid = id
-    clo = lo
-    chi = hi
-  var i = gTindex[cid,clo,chi](value: clo)
-  while true:
-    yield i
-    if i.value == chi: break
-    inc i.value
+  iterateIndices(id, lo, hi)
 template head*[id,lo,hi:static[int]](t: gTindexDummy[id,lo,hi]): gTindex[id,lo,hi] =
   # This `index` call is also a template that gets expanded
   # leaving no trace of the variable `t`.
   index(t, lo)
 iterator tail*(id, lo, hi: static[int]): gTindex[id,lo,hi] =
-  const
-    cid = id
-    clo = lo
-    chi = hi
-    lo1 = lo + 1
-  if lo1 <= hi:
-    var i = gTindex[cid,clo,chi](value: lo1)
-    while true:
-      yield i
-      if i.value == hi: break
-      inc i.value
+  iterateIndices(id, lo, hi, lo + 1)
 proc tail*[id,lo,hi:static[int]](t: gTindexDummy[id,lo,hi]): gTindexDummy[id,lo,hi] {.nodecl.} = t
 
 template index*[id,lo,hi:static[int]](d:gTindexDummy[id,lo,hi], n:static[int]): expr =
@@ -604,6 +633,10 @@ proc rebindAssignment(n: NimNode): NimNode =
   if n.kind == nnkAsgn:
     if n[0].kind == nnkDotExpr:
       result = getast g(n[0][0], n[0][1], n[1])
+    elif n[1].kind in CallNodes and $n[1][0] == "IndexType":
+      result = newCall(bindsym"IndexTypeDef", n[0])
+      for i in 1..<n[1].len:
+        result.add n[1][i]
     else:
       result = newCall(bindsym"autoIndexAsgn", n[0], n[1])
   else:
@@ -640,7 +673,9 @@ type
       vId, vIt: NimNode # dummy and its type
       con: bool         # if contracted
     of ixkE: vEl, vEr: ixtree  # lhs and rhs
-    of ixkM: vM: seq[ixtree]   # operands of `*`
+    of ixkM:
+      vM: seq[ixtree]   # operands of `*`
+      nn: NimNode       # The node (wrapped in a Par) of this `*` op.
     of ixkT: vT: seq[ixtree]   # indexing of a tensor
     of ixkN: vN: seq[ixtree]   # Other NimNode
     of ixk0: discard           # Empty
@@ -656,7 +691,7 @@ proc treerepr(t: ixtree): string =
       rhs = t.vEr.treerepr.indent(2)
     result = "Eq\n" & lhs & "\n" & rhs
   of ixkM:
-    result = "Mu"
+    result = "Mu: " & t.nn.repr
     for c in t.vM:
       result &= "\n" & c.treerepr.indent(2)
   of ixkT:
@@ -751,6 +786,8 @@ proc contractAutoDummy(n: NimNode): NimNode =
         # Special rebindings here to force type check the stmt again.
         if nn.kind in CallNodes:
           nn = nn.callNodesWrap.rebindIndexing
+        if ixt.kind == ixkM:
+          ixt.nn = nn.newPar
         result = (nn, ixt)
   proc alltypes(t: ixtree): seqset[NimNode] =
     result.init

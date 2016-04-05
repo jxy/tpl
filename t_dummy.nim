@@ -2,7 +2,7 @@ import math
 import unittest
 import tpl
 
-type
+tensorOpsSilent:
   Spin = IndexType(1,4)
   Color = IndexType(1,4)
 test "Index types":
@@ -49,7 +49,7 @@ block:
 
 block:
   echo "\n* test arithmatic with indices"
-  type
+  tensorOpsSilent:
     s2 = IndexType(3, 4)
     c3 = IndexType(0, 2)
   var
@@ -135,8 +135,9 @@ test "Dummy":
 
 test "Nested tensors":
   echo "\n* test nested"
-  type
+  tensorOpsSilent:
     inT = IndexType(0,1)
+  type
     In = Tensor([inT], float)
     cm = Tensor([Color, Color], In)
   var
