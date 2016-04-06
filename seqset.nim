@@ -37,7 +37,7 @@ proc `+=`*[T](x: var seqset[T], y: seqset[T]) =
 proc excl*[T](s: var seqset[T], x: T) =
   for n, i in s.s:
     if x == i:
-      s.s.del n
+      s.s.delete n
       break
 proc excl*[T](s: var seqset[T], x: seqset[T]) =
   for i in x:

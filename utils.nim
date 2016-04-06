@@ -155,3 +155,8 @@ proc dummyStr*(n: NimNode): string =
   if j != s.len:
     id.setLen j
   return id
+
+proc delete*[T](s: var seq[T], x: T) =
+  for i, c in s:
+    if c == x:
+      s.delete i
