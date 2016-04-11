@@ -4,6 +4,7 @@ import seqdict
 import utils
 import tensor_data_default
 import strutils
+import sequtils
 
 export tensor_data_default.`[]`
 export tensor_data_default.`[]=`
@@ -711,9 +712,9 @@ proc init(x: var replacePairs) =
   x.data.newseq(0)
 proc len(x: replacePairs): int =
   x.data.len
-proc add(x: var replacePairs, p: rpair) =
+proc add(x: var replacePairs, fr, to: NimNode) =
   var
-    p = p
+    p: rpair = (fr, to)
     changed = false
   for i in 0..<x.data.len:
     if x.data[i].fr == p.fr:
@@ -725,6 +726,8 @@ proc add(x: var replacePairs, p: rpair) =
       p.to = x.data[i].to
   if not changed:
     x.data.add p
+proc add(x: var replacePairs, p: rpair) =
+  x.add(p.fr, p.to)
 proc add(x: var replacePairs, ps: replacePairs) =
   for p in ps.data:
     x.add p
@@ -738,6 +741,7 @@ type
     of ixkI:
       vId, vIt: NimNode # dummy and its type
       con: bool         # if contracted via `*`; persistent
+      ovId: NimNode     # Save the original assigned dummy
     of ixkE: vEl, vEr: ixtree  # lhs and rhs
     of ixkM:
       vM: seq[ixtree]           # operands of `*`
@@ -753,7 +757,7 @@ proc treerepr(t: ixtree): string =
   of ixk0:
     result = "--"
   of ixkI:
-    result = "Ix " & t.vId.repr & ": " & t.vIt.repr & ", con: " & $t.con
+    result = "Ix " & t.vId.repr & "(was " & t.ovId.repr & ")" & ": " & t.vIt.repr & ", con: " & $t.con
   of ixkE:
     let
       lhs = t.vEl.treerepr.indent(2)
@@ -825,17 +829,20 @@ proc contractAutoDummy(n: NimNode): NimNode =
         t.vN.add i
       else:
         error "Internal error: cannot add to ixtree\n" & t.repr & "\nwith\n" & i.repr
-  proc markContracted(t: var ixtree, s: NimNode) =
+  proc markContracted(t: var ixtree, s: NimNode, r = newEmptyNode()) =
+    let r =                  # r is the replacement default to s.
+      if r.kind == nnkEmpty: s else: r
     case t.kind
     of ixkI:
       if t.vId == s:
+        t.vId = r
         t.con = true
     of ixkE:
-      t.vEl.markContracted s
-      t.vEr.markContracted s
+      t.vEl.markContracted(s, r)
+      t.vEr.markContracted(s, r)
     of ixkM:
       for i in 0..<t.vM.len:
-        t.vM[i].markContracted s
+        t.vM[i].markContracted(s, r)
     of ixkN:
       var matches: seqset[NimNode]
       matches.init
@@ -847,10 +854,10 @@ proc contractAutoDummy(n: NimNode): NimNode =
           matches.incl p.fr
       for i in 0..<t.vN.len:
         for x in matches:
-          t.vN[i].markContracted x
+          t.vN[i].markContracted(x, r)
     of ixkT:
       for i in 0..<t.vT.len:
-        t.vT[i].markContracted s
+        t.vT[i].markContracted(s, r)
     of ixk0:
       discard
   proc replaceAutoDummy(n: NimNode): (NimNode, ixtree) =
@@ -860,7 +867,7 @@ proc contractAutoDummy(n: NimNode): NimNode =
       for i in 1..<n.len:
         t.add n[i]
       let d = t.newDummySym
-      result = (d, ixtree(kind: ixkI, vId: d, vIt: t))
+      result = (d, ixtree(kind: ixkI, ovId: d, vId: d, vIt: t))
     elif n.isAutoSumStmt:
       let
         (lhs, lt) = n.getlhs.replaceAutoDummy
@@ -913,12 +920,13 @@ proc contractAutoDummy(n: NimNode): NimNode =
         result.incl s.alltypes
     of ixk0:
       discard
-  proc collectDummy(t: ixtree): seq[ixtree] =
+  type Ix = seqdict[NimNode, NimNode] # the symbol and its type
+  proc collectDummy(t: ixtree): Ix =
     # Collect all ixkI kinds.
-    result.newseq(0)
+    result.init
     case t.kind
     of ixkI:
-      result.add t
+      result.add(t.vId, t.vIt)
     of ixkE:
       result.add t.vEl.collectDummy
       result.add t.vEr.collectDummy
@@ -931,6 +939,27 @@ proc contractAutoDummy(n: NimNode): NimNode =
     of ixkN:
       for s in t.vN:
         result.add s.collectDummy
+    of ixk0:
+      discard
+  proc collectReplacement(t: ixtree): replacePairs =
+    result.init
+    case t.kind
+    of ixkI:
+      if t.ovId != t.vId:
+        result.add(t.ovId, t.vId)
+    of ixkE:
+      result.add t.vEl.collectReplacement
+      result.add t.vEr.collectReplacement
+    of ixkM:
+      for s in t.vM:
+        result.add s.collectReplacement
+    of ixkT:
+      for s in t.vT:
+        result.add s.collectReplacement
+    of ixkN:
+      for s in t.vN:
+        result.add s.collectReplacement
+      result.add t.matched
     of ixk0:
       discard
   proc collectSpecials(n: var seqdict[NimNode, NimNode], t: ixtree) =
@@ -951,26 +980,28 @@ proc contractAutoDummy(n: NimNode): NimNode =
         n.collectSpecials s
     else:
       discard
-  proc rmReplaced(xs: seq[ixtree], ps: replacePairs): seq[ixtree] =
-    result.newseq(xs.len)
-    var j = 0
-    for x in xs:
-      assert x.kind == ixkI
-      var toBeReplaced = false
+  proc rmReplaced(xs: Ix, ps: replacePairs): Ix =
+    result.init
+    for k, v in xs:
+      var unReplaced = true
       for p in ps:
-        if x.vId == p.fr:
-          toBeReplaced = true
+        if k == p.fr:
+          unReplaced = false
           break
-      if not toBeReplaced:
-        result[j] = x
-        inc j
-    result.setlen j
+      if unReplaced:
+        result.add(k, v)
   proc freeIx(t: ixtree, s: NimNode): seq[NimNode] =
     result = @[]
     case t.kind
     of ixkI:
       if t.vIt == s and not t.con:
-        result.add t.vId
+        var newId = true
+        for x in result:
+          if x == t.vId:
+            newId = false
+            break
+        if newId:
+          result.add t.vId
     of ixkE:
       result.add t.vEl.freeIx s
       result.add t.vEr.freeIx s
@@ -995,17 +1026,16 @@ proc contractAutoDummy(n: NimNode): NimNode =
           result.delete p.to
     of ixk0:
       discard
-  proc matchDummyType(t: var ixtree, s: NimNode): replacePairs # Used in following recursions.
-  proc contractMul(t: var ixtree, s: NimNode): replacePairs =
+  proc matchDummyType(t: var ixtree, s: NimNode) # Used in following recursions.
+  proc contractMul(t: var ixtree, s: NimNode): int =
     # We contract nearby indices of tensors multiplied together.
     # hint "contractMul:t: " & t.treerepr
     # hint "contractMul:s: " & s.lisprepr
-    result.init
     case t.kind:
     of ixkM:
       var ixlist = newseq[seq[NimNode]](t.vM.len)
       for i in 0..<t.vM.len:
-        result.add t.vM[i].contractMul s
+        result += t.vM[i].contractMul s
         ixlist[i] = t.vM[i].freeIx s
       if s[0].intval == TPL_complex:
         if ixlist.len >= 2 and ixlist[1].len > 0 and ixlist[0].len > 0:
@@ -1014,20 +1044,18 @@ proc contractAutoDummy(n: NimNode): NimNode =
             error "Complex contraction only implemented for the dyadic multiplication."
           let
             o = newDummySym(s)
-            lo = newDummySym(s)
-            ro = newDummySym(s)
-          t.vM[0].markContracted ixlist[0][^1]
-          t.vM[1].markContracted ixlist[1][0]
-          result.add((lo, ixlist[0][^1]))
-          result.add((ro, ixlist[1][0]))
+            lo = ixlist[0][^1]
+            ro = ixlist[1][0]
+          t.vM[0].markContracted lo
+          t.vM[1].markContracted ro
           var m = ixtree(kind: ixkM, vM: @[], nn: newEmptyNode(), scon: newEmptyNode())
           m.add t.vM[0]
           m.add t.vM[1]
           t.vM[1] = m
           t.vM[0] = ixtree(kind: ixkT, vT: @[])
-          t.vM[0].add ixtree(kind: ixkI, vId: o, vIt: s, con: false)
-          t.vM[0].add ixtree(kind: ixkI, vId: lo, vIt: s, con: true)
-          t.vM[0].add ixtree(kind: ixkI, vId: ro, vIt: s, con: true)
+          t.vM[0].add ixtree(kind: ixkI, ovId:  o, vId:  o, vIt: s, con: false)
+          t.vM[0].add ixtree(kind: ixkI, ovId: lo, vId: lo, vIt: s, con: true)
+          t.vM[0].add ixtree(kind: ixkI, ovId: ro, vId: ro, vIt: s, con: true)
           t.scon = complexCoeff(o, lo, ro)
           # warning t.treerepr
         # Since we are not looping over multiple operands, we
@@ -1037,86 +1065,77 @@ proc contractAutoDummy(n: NimNode): NimNode =
           if ixlist[i].len > 0:
             for prevI in countdown(i-1, 0):
               if ixlist[prevI].len > 0:
-                result.add((ixlist[i][0], ixlist[prevI][^1]))
-                t.vM[i].markContracted ixlist[i][0]
+                t.vM[i].markContracted(ixlist[i][0], ixlist[prevI][^1])
                 ixlist[i].del 0
                 t.vM[prevI].markContracted ixlist[prevI][^1]
                 ixlist[prevI].del(ixlist[prevI].len-1)
                 break
     of ixkT:
       for i in 0..<t.vT.len:
-        result.add t.vT[i].contractMul s
+        result += t.vT[i].contractMul s
+      t.matchDummyType s
     of ixkN:
       for i in 0..<t.vN.len:
-        result.add t.vN[i].contractMul s
-      result.add t.matchDummyType s
+        result += t.vN[i].contractMul s
+      t.matchDummyType s
     else:
-      result.init
+      discard "Assumes nothing of interest for the rest."
     # hint "contractMul:t: " & t.treerepr
-    # hint "contractMul:result: " & $result
-  proc match2(s: NimNode, lhs, rhs: var ixtree): (replacePairs, seq[NimNode], seq[NimNode]) =
+  proc match2(s: NimNode, lhs, rhs: var ixtree): (seq[NimNode], seq[NimNode]) =
     # Try to match lhs with rhs, returns replacement pairs and
     # non-contracted indices from lhs and rhs.
     # hint "match2: " & s.repr
     # hint "match2:BEGIN:lhs: " & lhs.treerepr
     # hint "match2:BEGIN:rhs: " & rhs.treerepr
-    var
-      lp = lhs.matchDummyType s
-      rp = rhs.matchDummyType s
-      lix = lhs.freeIx s
-      rix = rhs.freeIx s
+    lhs.matchDummyType s
+    rhs.matchDummyType s
     # hint "match2:AFTER matchDummyType:lhs: " & lhs.treerepr
     # hint "match2:AFTER matchDummyType:rhs: " & rhs.treerepr
-    # hint "match2:lp: " & $lp
-    # hint "match2:rp: " & $rp
+    var
+      lix = lhs.freeIx s
+      rix = rhs.freeIx s
     # hint "match2:lix: " & $lix
     # hint "match2:rix: " & $rix
     while lix.len != rix.len:
       if lix.len > rix.len:
-        let p = lhs.contractMul s
+        let n = lhs.contractMul s
         lix = lhs.freeIx s
-        if p.len == 0:
+        if n == 0:
           break
-        lp.add p
       else:
-        let p = rhs.contractMul s
+        let n = rhs.contractMul s
         rix = rhs.freeIx s
-        if p.len == 0:
+        if n == 0:
           break
-        rp.add p
-      # hint "match2:WHILE:lp: " & $lp
-      # hint "match2:WHILE:rp: " & $rp
       # hint "match2:WHILE:lix: " & $lix
       # hint "match2:WHILE:rix: " & $rix
-    lp.add rp
-    if lix.len == rix.len:
-      for i in 0..<lix.len:
-        lp.add((rix[i], lix[i]))
-      result = (lp, lix, rix)
-    else:
-      result = (lp, lix, rix)
-  proc matchDummyType(t: var ixtree, s: NimNode): replacePairs =
+    result = (lix, rix)
+  proc matchDummyType(t: var ixtree, s: NimNode) =
     # Make sure that indices of type `s` are matched.
     # hint ">>>> matchDummyType: " & s.repr
     # hint ">>>> matchDummyType <<<<\n" & t.treerepr
     case t.kind
     of ixkE:
-      let (rp, lix, rix) = s.match2(t.vEl, t.vEr)
+      let (lix, rix) = s.match2(t.vEl, t.vEr)
       # hint "matchDummyType:lix " & lix.repr
       # hint "matchDummyType:rix " & rix.repr
       # hint "matchDummyType:rp " & rp.repr
-      result = rp
       if lix.len != rix.len:
+        # FIXME: what happens if len == 0?
         if lix.len <= 1 or rix.len <= 1: # Special Assignment Rule!
           let ix = if lix.len > 0: lix[0] else: rix[0]
           for c in lix:
             if c != ix:
-              result.add((c, ix))
+              t.vEl.markContracted(c, ix)
           for c in rix:
             if c != ix:
-              result.add((c, ix))
+              t.vEr.markContracted(c, ix)
         else:
           error "Cannot match dummy indices for type: " & s.repr
+      else:
+        for k in 0..<lix.len:
+          t.vEl.markContracted lix[k]
+          t.vEr.markContracted(rix[k], lix[k])
     of ixkN:
       let n = t.vn.len - 1
       # hint $n
@@ -1127,39 +1146,33 @@ proc contractAutoDummy(n: NimNode): NimNode =
       while changed and unmatched:
         unmatched = false
         t.matched.init
-        result.init
         for i in 0..<n:
+          # Matching nearby pairs of nodes
           # hint $i
           let
             olen = idlen[i]
-            (rp, lix, rix) = s.match2(t.vN[i], t.vN[i+1])
+            (lix, rix) = s.match2(t.vN[i], t.vN[i+1])
           if lix.len != rix.len:
             error "Cannot match dummy indices for type: " & s.repr
           for k in 0..<lix.len:
             t.matched.add((rix[k], lix[k]))
           idlen[i] = lix.len
-          changed = changed or olen != idlen[i]
-          result.add rp
+          changed = changed or olen != idlen[i] # If any of the free index length changed.
         for i in 0..<n-1:
           if idlen[i] != idlen[i+1]:
             unmatched = true
             break
     of ixkM:
-      result.init
       for i in 0..<t.vM.len:
-        result.add t.vM[i].matchDummyType s
+        t.vM[i].matchDummyType s
     of ixkT:
-      result.init
       for i in 0..<t.vT.len:
-        result.add t.vT[i].matchDummyType s
-    of ixkI:
-      result.init
-    of ixk0:
-      result.init
-  proc matchDummy(t: var ixtree): replacePairs =
-    result.init
+        t.vT[i].matchDummyType s
+    else:
+      discard "Nothing to worry about."
+  proc matchDummy(t: var ixtree) =
     for s in t.alltypes:
-      result.add t.matchDummyType s
+      t.matchDummyType s
   # Stitch the functions together.
   var ixt: ixtree
   (result, ixt) = n.replaceAutoDummy
@@ -1167,25 +1180,25 @@ proc contractAutoDummy(n: NimNode): NimNode =
     # hint "contractAutoDummy:n: " & n.repr
     # hint "contractAutoDummy:result: " & result.repr
     # hint "contractAutoDummy:ixt: " & ixt.treerepr
-    let reps = ixt.matchDummy
+    ixt.matchDummy
     var specialContractions = newseqdict[NimNode, NimNode]()
     specialContractions.collectSpecials ixt
     result = result.unwrapMult specialContractions
+    let reps = ixt.collectReplacement
+    # hint "contractAutoDummy:reps: " & reps.repr
     for s in reps:
       result = result.replace s
     let ix = ixt.collectDummy.rmReplaced reps
-    result = newStmtList().add(
+    # hint "contractAutoDummy:ix: " & ix.repr
+    result = newStmtList(
       newNimNode(nnkVarSection).add(
-        newIdentDefs(gensym(nskVar, "__TPL__INTERNAL_REMOVE__"), newEmptyNode(), newLit(0))
-      ),
-      result
-    )
-    for i in ix:
-      assert i.kind == ixkI
+        newIdentDefs(gensym(nskVar, "__TPL__INTERNAL_REMOVE__"), newEmptyNode(), newLit(0))),
+      result)
+    for id, ty in ix:
       var d = newCall(bindsym"dummyIx")
-      for s in i.vIt:
+      for s in ty:
         d.add s
-      result[0].add newIdentDefs(i.vId, newEmptyNode(), d)
+      result[0].add newIdentDefs(id, newEmptyNode(), d)
     # hint "    --------------------"
     # hint "contractAutoDummy:result: " & result.repr
     # hint "contractAutoDummy:ixt: " & ixt.treerepr
@@ -1482,7 +1495,7 @@ proc collectTensors(n: NimNode): (seqset[NimNode], seqset[NimNode]) =
     for i in 1..<t.len:
       t[i] = t[i].extractIndex
     if n[0].kind in {nnkHiddenAddr, nnkHiddenDeref} and n[0][0].kind in {nnkSym, nnkDotExpr}:
-      # FIXME: this check may no longer work if getlhs removes these hidden nodes.
+      # WARNING: this check may no longer work if getlhs removes these hidden nodes.
       t[0] = t[0][0].extractTensor
       lv.incl t
     elif n[0].kind in {nnkSym, nnkDotExpr}:
