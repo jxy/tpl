@@ -492,14 +492,37 @@ proc complexCoeff(a, b, c: NimNode): NimNode =
                    newCall(bindsym"indexValue", a),
                    newCall(bindsym"indexValue", b),
                    newCall(bindsym"indexValue", c))
-template re*[D,V;id1,lo1,hi1:static[int]](x: gT1[D,V,id1,lo1,hi1]): expr =
+type
+  gP2I1[D,V;n1,ci1,id1,lo1,hi1:static[int]] = object
+    data*: ptr[D]
+template `[]`*[D,V;id1,lo1,hi1,ci1:static[int]](t: gP2I1[D,V,1,ci1,id1,lo1,hi1], i1: int): expr =
+  t.data[][ci1,i1]
+template `[]=`*[D,V;id1,lo1,hi1,ci1:static[int]](t: gP2I1[D,V,1,ci1,id1,lo1,hi1], i1: int, y: V): expr =
+  t.data[][ci1,i1] = y
+template `[]`*[D,V;id1,lo1,hi1,ci1:static[int]](t: gP2I1[D,V,2,ci1,id1,lo1,hi1], i1: int): expr =
+  t.data[][i1,ci1]
+template `[]=`*[D,V;id1,lo1,hi1,ci1:static[int]](t: gP2I1[D,V,2,ci1,id1,lo1,hi1], i1: int, y: V): expr =
+  t.data[][i1,ci1] = y
+template partIndexTensor[D,V;id1,lo1,hi1,id2,lo2,hi2:static[int]](nix: int, x: gT2[D,V,id1,lo1,hi1,id2,lo2,hi2], ix: int): expr =
+  const
+    cid1 = id2
+    clo1 = lo2
+    chi1 = hi2
+    cix = ix
+    cni = nix
+  type
+    DD = D
+    VV = V
+    P = gP2I1[DD,VV,cni,cix,cid1,clo1,chi1]
+  gT1[P,VV,cid1,clo1,chi1](data: P(data: addr(x.data)))
+template re*[D,V](x: gT1[D,V,TPL_complex,0,1]): expr =
   x.data[0]
-template im*[D,V;id1,lo1,hi1:static[int]](x: gT1[D,V,id1,lo1,hi1]): expr =
+template im*[D,V](x: gT1[D,V,TPL_complex,0,1]): expr =
   x.data[1]
-template `re=`*[D,V;id1,lo1,hi1:static[int]](x: gT1[D,V,id1,lo1,hi1], y: V): expr =
-  x.data[0] = y
-template `im=`*[D,V;id1,lo1,hi1:static[int]](x: gT1[D,V,id1,lo1,hi1], y: V): expr =
-  x.data[1] = y
+template re*[D,V;id2,lo2,hi2:static[int]](x: gT2[D,V,TPL_complex,0,1,id2,lo2,hi2]): expr =
+  partIndexTensor(1, x, 0)
+template im*[D,V;id2,lo2,hi2:static[int]](x: gT2[D,V,TPL_complex,0,1,id2,lo2,hi2]): expr =
+  partIndexTensor(1, x, 1)
 
 ####################
 # tensor ops

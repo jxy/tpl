@@ -5,7 +5,7 @@ import tpl
 var
   x, y, z: Tensor([Complex], float)
 test "complex multiplications":
-  tensorOps:
+  tensorOpsSilent:
     x = sqrt 0.5
     y = x
     echo "x = sqrt 0.5 = ", x
@@ -38,3 +38,35 @@ test "complex multiplications":
     echo "z = y * ((x * y - z) * x - x * x) * (z - x) * x = ", z
     check z.re == -0.7071067811865483
     check z.im == -0.29289321881345187
+
+test "complex vectors":
+  tensorOpsSilent:
+    I = IndexType(0,2)
+    var
+      v, u: Tensor([Complex, I], float)
+      k = I.dummy
+    v[k] = sqrt(k) * x
+    u = x * v
+    echo "v[k] = sqrt(k) * x = ", v
+    check $v == """[[ 0.0               , 0.0                ],
+ [ 0.7071067811865476, 0.7071067811865476 ],
+ [ 1.0               , 1.0                ]]"""
+    echo "u = x * v = ", u
+    check $u == """[[ 0.0, 0.0               ],
+ [ 0.0, 1.0               ],
+ [ 0.0, 1.414213562373095 ]]"""
+    v.im += sqrt 0.5
+    u = x * v
+    echo "v.im += sqrt 0.5; v = ", v
+    check $v == """[[ 0.0               , 0.7071067811865476 ],
+ [ 0.7071067811865476, 1.414213562373095  ],
+ [ 1.0               , 1.707106781186548  ]]"""
+    echo "u = x * v = ", u
+    check $u == """[[ -0.5000000000000001, 0.5000000000000001 ],
+ [ -0.5000000000000001, 1.5                ],
+ [ -0.5000000000000002, 1.914213562373096  ]]"""
+    echo "u.re = ", u.re
+    check $u.re == "[ -0.5000000000000001, -0.5000000000000001, -0.5000000000000002 ]"
+    u.im = v.im
+    echo "u.im = v.im; u.im = ", u.im
+    check $u.im == "[ 0.7071067811865476, 1.414213562373095, 1.707106781186548 ]"
