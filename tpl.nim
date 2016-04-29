@@ -419,30 +419,128 @@ macro genUOp(os: varargs[untyped]): stmt =
     result.add newCall(bindsym"genUnaryOp", o)
 genUOp(`+`, `-`)
 
-template genBinaryOp(op: untyped): stmt =
-  template op*[lD,lV;lid1,llo1,lhi1:static[int]](x: gT1[lD,lV,lid1,llo1,lhi1], y: lV): expr =
-    op(x[automaticIndex(lid1,llo1,lhi1)], y)
-  template op*[rD,rV;rid1,rlo1,rhi1:static[int]](x: rV, y: gT1[rD,rV,rid1,rlo1,rhi1]): expr =
-    op(x, y[automaticIndex(rid1,rlo1,rhi1)])
-  template op*[lD,lV,rD,rV;lid1,llo1,lhi1,rid1,rlo1,rhi1:static[int]](x: gT1[lD,lV,lid1,llo1,lhi1], y: gT1[rD,rV,rid1,rlo1,rhi1]): expr =
-    op(x[automaticIndex(lid1,llo1,lhi1)], y[automaticIndex(rid1,rlo1,rhi1)])
-  template op*[lD,lV;lid1,llo1,lhi1,lid2,llo2,lhi2:static[int]](x: gT2[lD,lV,lid1,llo1,lhi1,lid2,llo2,lhi2], y: lV): expr =
-    op(x[automaticIndex(lid1,llo1,lhi1),automaticIndex(lid2,llo2,lhi2)], y)
-  template op*[rD,rV;rid1,rlo1,rhi1,rid2,rlo2,rhi2:static[int]](x: rV, y: gT2[rD,rV,rid1,rlo1,rhi1,rid2,rlo2,rhi2]): expr =
-    op(x, y[automaticIndex(rid1,rlo1,rhi1),automaticIndex(rid2,rlo2,rhi2)])
-  template op*[lD,lV,rD,rV;lid1,llo1,lhi1,lid2,llo2,lhi2,rid1,rlo1,rhi1:static[int]](x: gT2[lD,lV,lid1,llo1,lhi1,lid2,llo2,lhi2], y: gT1[rD,rV,rid1,rlo1,rhi1]): expr =
-    op(x[automaticIndex(lid1,llo1,lhi1),automaticIndex(lid2,llo2,lhi2)], y[automaticIndex(rid1,rlo1,rhi1)])
-  template op*[lD,lV,rD,rV;lid1,llo1,lhi1,rid1,rlo1,rhi1,rid2,rlo2,rhi2:static[int]](x: gT1[lD,lV,lid1,llo1,lhi1], y: gT2[rD,rV,rid1,rlo1,rhi1,rid2,rlo2,rhi2]): expr =
-    op(x[automaticIndex(lid1,llo1,lhi1)], y[automaticIndex(rid1,rlo1,rhi1),automaticIndex(rid2,rlo2,rhi2)])
-  template op*[lD,lV,rD,rV;lid1,llo1,lhi1,lid2,llo2,lhi2,rid1,rlo1,rhi1,rid2,rlo2,rhi2:static[int]](x: gT2[lD,lV,lid1,llo1,lhi1,lid2,llo2,lhi2], y: gT2[rD,rV,rid1,rlo1,rhi1,rid2,rlo2,rhi2]): expr =
-    op(x[automaticIndex(lid1,llo1,lhi1),automaticIndex(lid2,llo2,lhi2)], y[automaticIndex(rid1,rlo1,rhi1),automaticIndex(rid2,rlo2,rhi2)])
+proc unindexedOp(tmp: NimNode, xrank, yrank: int): NimNode =
+  result = tmp.copy
+  let
+    xd = tmp[2][0][0]
+    yd = tmp[2][0][1]
+    xv = tmp[2][0][2]
+    yv = tmp[2][0][3]
+    xid = $tmp[2][1][0]
+    xlo = $tmp[2][1][1]
+    xhi = $tmp[2][1][2]
+    yid = $tmp[2][1][3]
+    ylo = $tmp[2][1][4]
+    yhi = $tmp[2][1][5]
+    x = ident($tmp[3][1][0])
+    y = ident($tmp[3][2][0])
+  var
+    dv = newNimNode(nnkIdentDefs).add(xv, yv)
+    id = newNimNode(nnkIdentDefs)
+    xtype, ytype: NimNode
+    xval, yval: NimNode
+  if xrank > 0:
+    xtype = newNimNode(nnkBracketExpr).add(ident("gT" & $xrank), xd, xv)
+    xval = newNimNode(nnkBracketExpr).add x
+    dv.add xd
+    for n in 1..xrank:
+      id.add(ident(xid & $n), ident(xlo & $n), ident(xhi & $n))
+      xtype.add(ident(xid & $n), ident(xlo & $n), ident(xhi & $n))
+      xval.add newCall(bindsym"automaticIndex", ident(xid & $n), ident(xlo & $n), ident(xhi & $n))
+  else:                         # xrank == 0
+    xtype = xv
+    xval = x
+  if yrank > 0:
+    ytype = newNimNode(nnkBracketExpr).add(ident("gT" & $yrank), yd, yv)
+    yval = newNimNode(nnkBracketExpr).add y
+    dv.add yd
+    for n in 1..yrank:
+      id.add(ident(yid & $n), ident(ylo & $n), ident(yhi & $n))
+      ytype.add(ident(yid & $n), ident(ylo & $n), ident(yhi & $n))
+      yval.add newCall(bindsym"automaticIndex", ident(yid & $n), ident(ylo & $n), ident(yhi & $n))
+  else:                         # yrank == 0
+    ytype = yv
+    yval = y
+  dv.add(newEmptyNode(), newEmptyNode())
+  id.add(tmp[2][1][6], newEmptyNode())
+  result[2][0] = dv
+  result[2][1] = id
+  result[3][1][0] = x
+  result[3][1][1] = xtype
+  result[3][2][0] = y
+  result[3][2][1] = ytype
+  result[6][0][1] = xval
+  result[6][0][2] = yval
+macro genUnIndexedOps(n: static[int]): stmt =
+  result = quote do:
+    template genBinaryOp(op: untyped): stmt =
+      template op*[lD,rD,lV,rV;lid,llo,lhi,rid,rlo,rhi:static[int]](x: xtype, y: ytype): expr =
+        op(x, y)
+  result.expectKind nnkStmtList
+  result[0].expectKind nnkTemplateDef
+  result = result[0]
+  #echo result.treerepr
+  var tmp = result[6][0]
+  tmp.expectKind nnkTemplateDef
+  result[6] = newStmtList()
+  for lrank in 0..n:
+    for rrank in 0..n:
+      if lrank == 0 and rrank == 0:
+        continue
+      result[6].add tmp.unindexedOp(lrank, rrank)
+  #result = result.copy
+  #echo result.repr
+  #echo result.treerepr
+genUnIndexedOps(maxTensorRanks)
+#genUnIndexedOps(2)
 
+#[
+template genBinaryOp(op: untyped): stmt =
+  template op*[lD,lV,rV;lid1,llo1,lhi1:static[int]](x: gT1[lD,lV,lid1,llo1,lhi1], y: rV): expr =
+    op(x[automaticIndex(lid1,llo1,lhi1)], y)
+  template op*[rD,lV,rV;rid1,rlo1,rhi1:static[int]](x: lV, y: gT1[rD,rV,rid1,rlo1,rhi1]): expr =
+    op(x, y[automaticIndex(rid1,rlo1,rhi1)])
+  template op*[lD,rD,lV,rV;lid1,llo1,lhi1,rid1,rlo1,rhi1:static[int]](x: gT1[lD,lV,lid1,llo1,lhi1], y: gT1[rD,rV,rid1,rlo1,rhi1]): expr =
+    op(x[automaticIndex(lid1,llo1,lhi1)], y[automaticIndex(rid1,rlo1,rhi1)])
+  template op*[lD,lV,rV;lid1,llo1,lhi1,lid2,llo2,lhi2:static[int]](x: gT2[lD,lV,lid1,llo1,lhi1,lid2,llo2,lhi2], y: rV): expr =
+    op(x[automaticIndex(lid1,llo1,lhi1),automaticIndex(lid2,llo2,lhi2)], y)
+  template op*[rD,lV,rV;rid1,rlo1,rhi1,rid2,rlo2,rhi2:static[int]](x: lV, y: gT2[rD,rV,rid1,rlo1,rhi1,rid2,rlo2,rhi2]): expr =
+    op(x, y[automaticIndex(rid1,rlo1,rhi1),automaticIndex(rid2,rlo2,rhi2)])
+  template op*[lD,rD,lV,rV;lid1,llo1,lhi1,lid2,llo2,lhi2,rid1,rlo1,rhi1:static[int]](x: gT2[lD,lV,lid1,llo1,lhi1,lid2,llo2,lhi2], y: gT1[rD,rV,rid1,rlo1,rhi1]): expr =
+    op(x[automaticIndex(lid1,llo1,lhi1),automaticIndex(lid2,llo2,lhi2)], y[automaticIndex(rid1,rlo1,rhi1)])
+  template op*[lD,rD,lV,rV;lid1,llo1,lhi1,rid1,rlo1,rhi1,rid2,rlo2,rhi2:static[int]](x: gT1[lD,lV,lid1,llo1,lhi1], y: gT2[rD,rV,rid1,rlo1,rhi1,rid2,rlo2,rhi2]): expr =
+    op(x[automaticIndex(lid1,llo1,lhi1)], y[automaticIndex(rid1,rlo1,rhi1),automaticIndex(rid2,rlo2,rhi2)])
+  template op*[lD,rD,lV,rV;lid1,llo1,lhi1,lid2,llo2,lhi2,rid1,rlo1,rhi1,rid2,rlo2,rhi2:static[int]](x: gT2[lD,lV,lid1,llo1,lhi1,lid2,llo2,lhi2], y: gT2[rD,rV,rid1,rlo1,rhi1,rid2,rlo2,rhi2]): expr =
+    op(x[automaticIndex(lid1,llo1,lhi1),automaticIndex(lid2,llo2,lhi2)], y[automaticIndex(rid1,rlo1,rhi1),automaticIndex(rid2,rlo2,rhi2)])
+]#
 macro genBOp(os: varargs[untyped]): stmt =
   result = newStmtList()
   for o in os:
     result.add newCall(bindsym"genBinaryOp", o)
 genBOp(`+`, `-`, `*`, `/`, `+=`, `-=`, `*=`, `/=`)
 
+proc convOpToAsgn(n: NimNode): NimNode =
+  result = n
+  result[6][0] = newAssignment(n[6][0][1], n[6][0][2])
+macro genAutoIndexAsgn(n: static[int]): stmt =
+  var tmp = quote do:
+    template autoIndexAsgn[lD,rD,lV,rV;lid,llo,lhi,rid,rlo,rhi:static[int]](x: xtype, y: ytype): expr =
+      op(x, y)
+  tmp.expectKind nnkStmtList
+  tmp[0].expectKind nnkTemplateDef
+  tmp = tmp[0]
+  result = newStmtList()
+  for lrank in 0..n:
+    for rrank in 0..n:
+      if lrank == 0 and rrank == 0:
+        continue
+      result.add tmp.unindexedOp(lrank, rrank).convOpToAsgn
+  #result = result.copy
+  #echo result.repr
+  #echo result.treerepr
+genAutoIndexAsgn(maxTensorRanks)
+#genAutoIndexAsgn(2)
+#[
 template autoIndexAsgn[lD,lV;lid1,llo1,lhi1:static[int]](x: gT1[lD,lV,lid1,llo1,lhi1], y: lV): expr =
   x[automaticIndex(lid1,llo1,lhi1)] = y
 template autoIndexAsgn[rD,rV;rid1,rlo1,rhi1:static[int]](x: rV, y: gT1[rD,rV,rid1,rlo1,rhi1]): expr =
@@ -459,6 +557,7 @@ template autoIndexAsgn[lD,lV,rD,rV;lid1,llo1,lhi1,rid1,rlo1,rhi1,rid2,rlo2,rhi2:
   x[automaticIndex(lid1,llo1,lhi1)] = y[automaticIndex(rid1,rlo1,rhi1),automaticIndex(rid2,rlo2,rhi2)]
 template autoIndexAsgn[lD,lV,rD,rV;lid1,llo1,lhi1,lid2,llo2,lhi2,rid1,rlo1,rhi1,rid2,rlo2,rhi2:static[int]](x: gT2[lD,lV,lid1,llo1,lhi1,lid2,llo2,lhi2], y: gT2[rD,rV,rid1,rlo1,rhi1,rid2,rlo2,rhi2]): expr =
   x[automaticIndex(lid1,llo1,lhi1),automaticIndex(lid2,llo2,lhi2)] = y[automaticIndex(rid1,rlo1,rhi1),automaticIndex(rid2,rlo2,rhi2)]
+]#
 macro autoIndexAsgn[T](lhs: T, rhs: T): stmt =
   dbg "autoIndexAsgn <= lhs: ", lhs, TPLDebug.detail
   dbg "autoIndexAsgn <= rhs: ", rhs, TPLDebug.detail
