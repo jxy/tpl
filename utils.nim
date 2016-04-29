@@ -69,27 +69,26 @@ proc convert*(n: NimNode, i: NimNode, j: NimNode): NimNode =
   # echo i.treerepr
   # echo j.treerepr
   proc go(n: NimNode, i: NimNode, j: NimNode): tuple[rep: bool, nn: NimNode] =
-    # echo "  ==== go : ", n.lisprepr
+    # echo "  ==== go ENTER:n: ", n.lisprepr
     if n == i:
       # echo "  ---- n == i"
       result = (true, j)
     else:
-      # echo "A"
       result.rep = false
-      # echo "* n: ", n.lisprepr
-      result.nn = n.copyNimNode
+      # echo "       n: ", n.treerepr
+      # result.nn = n.copyNimNode # SIGSEGV?!
+      result.nn = n.copy
       # echo "THE node: ", result.nn.lisprepr
-      # result.nn = n.copyNimNode # FIXME: we may not need the changes later if we stop using copyNimNode.
-      # echo "THE node: ", result.nn.lisprepr
-      for c in n:
-        let cc = c.go(i,j)
-        # echo "# ", cc.rep, " : ", cc.nn.lisprepr
+      for c in 0..<n.len:
+        let cc = n[c].go(i,j)
+        # echo "  ---- ", cc.rep, " : ", cc.nn.lisprepr
         # echo "BEFORE"
-        result.nn.add cc.nn
+        # result.nn.add cc.nn
         # echo "AFTER"
         # echo "## ", result.rep, " : ", result.nn.lisprepr
         if cc.rep:
           result.rep = true
+          result.nn[c] = cc.nn
     #[
     if result.nn.kind == nnkHiddenAddr:
       # we may not need this, but just keep this kind here
@@ -119,8 +118,9 @@ proc convert*(n: NimNode, i: NimNode, j: NimNode): NimNode =
         for i in 1..<result.nn.len:
           nnn.add result.nn[i]
         result.nn = nnn
-    # echo "       repr : ", result.rep
+    # echo "       repl : ", result.rep
     # echo "       node : ", result.nn.lisprepr
+    # echo "  **** go LEAVE:n: ", n.lisprepr
   result = go(n,i,j).nn
   # echo result.treerepr
   # echo "<<<< convert"
@@ -144,7 +144,7 @@ proc dummyStr*(n: NimNode): string =
   var id = newString(s.len)
   var j = 0
   for i in 0..<s.len:
-    if s[i] in IdentChars - {'_'}:
+    if s[i] in IdentChars - {'_'} + {'-'}:
       id[j] = s[i]
       inc j
     elif j > 0 and id[j-1] != '_':
