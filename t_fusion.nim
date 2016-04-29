@@ -65,11 +65,11 @@ test "Fused vector ops":
     echo "\nThese should fuse completely (check the compiler output!)"
     v2 = 0
     v2 += v1 + 0.1
-    v3 += v2 * m1
+    v3 += m1 * v2
   tensorOpsSilent:
     echo "v2 = 0; v2 += v1 + 0.1 = ", v2
-    echo "v3 += v2 * m1 = ", v3
+    echo "v3 += m1 * v2 = ", v3
     t[i] = 1.1*i+0.1
     check(v2[i] == t[i])
-    v4 = v2 * m1
+    v4 = m1 * v2
     check(v4[i] == v3[i])
