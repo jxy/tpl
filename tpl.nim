@@ -79,18 +79,27 @@ template iterateIndices(id, lo, hi, begin: static[int]): stmt =
     cid = id
     clo = lo
     chi = hi
-    cbegin = begin
-  when chi < clo:
-    let upper = savedIndexLength(cid)
-    if cbegin <= upper:
+  when chi < clo:               # A variable length index.
+    let
+      n = savedIndexLength(cid)
+    when declared(threadNum) and declared(numThreads):
+      let
+        cbegin = begin + ((threadNum*n) div numThreads)
+        cend = begin + (((threadNum+1)*n) div numThreads) - 1
+      #echo "thread #", threadNum, ": ", cbegin, " - ", cend
+    else:
+      let
+        cbegin = begin
+        cend = begin + n - 1
+    if cbegin <= cend:
       var i = gTindex[cid,clo,chi](value: cbegin)
       while true:
         yield i
-        if i.value == upper: break
+        if i.value == cend: break
         inc i.value
   else:
-    when cbegin <= chi:
-      var i = gTindex[cid,clo,chi](value: cbegin)
+    when begin <= chi:
+      var i = gTindex[cid,clo,chi](value: begin)
       while true:
         yield i
         if i.value == chi: break
@@ -104,7 +113,7 @@ iterator items*[ty:static[TPLIndex];id,lo,hi:static[int]](t: typedesc[AnyIndex[t
 
 proc `$`*[id,lo,hi:static[int]](x: gTindex[id,lo,hi]): string =
   when hi < lo:
-    $x.value & ":IdxV[" & $id & "," & $lo & "," & $savedIndexLength(id) & "]"
+    $x.value & ":IdxV[" & $id & "," & $lo & "," & $(savedIndexLength(id)+lo-1) & "]"
   else:
     $x.value & ":Idx[" & $id & "," & $lo & "," & $hi & "]"
 
@@ -126,7 +135,7 @@ macro indexTypeVar(t: untyped, id, lo: static[int], hi: int): expr =
       newIdentDefs(
         newNimNode(nnkPragmaExpr).add(vlen, newNimNode(nnkPragma).add(ident"global")),
         ident"int")),
-    newAssignment(vlen, hi),
+    newAssignment(vlen, infix(infix(hi, "-", lo.newlit), "+", 1.newlit)),
     newCall(bindsym"uninitializedIndex", t, id.newlit, lo.newlit, (lo - 1).newlit))
   IndexLength.add(id, vlen)
   # echo "indexTypeVar: ", result.repr
