@@ -24,6 +24,7 @@ var
 proc dbg(s: string = "", n: NimNode = newEmptyNode(), lvl: TPLDebug = TPLDebug.final) =
   if TPLDebugLevel >= lvl:
     let ns = if TPLDebugLevel >= TPLDebug.detail: n.treerepr else: n.repr
+    echo "========================================"
     if n == newEmptyNode():
       echo "DBG:", lvl, ":", s
     else:
@@ -924,7 +925,7 @@ proc contractAutoDummy(n: NimNode): NimNode =
     if n.kind in CallNodes and n[0] == multWrap:
       let m = n[1]
       if m in s:
-        result = newCall(bindsym"*", s[m], n[2].unwrapMult s).callNodesWrap
+        result = newCall(ident"*", s[m], n[2].unwrapMult s).callNodesWrap
       else:
         result = n[2].unwrapMult s
     else:
@@ -1545,12 +1546,19 @@ proc collectTensors(n: NimNode): (seqset[NimNode], seqset[NimNode]) =
   # echo "collectTensors:n <= # ", n.lisprepr
   proc extractIndex(n: NimNode): NimNode =
     if n.kind in CallNodes and $n[0] == "indexValue":
-      result = n[1]
+      result = n[1].extractIndex
+    elif n.kind in CallNodes and $n[0] == "TPLDummyConv":
+      result = n[1].extractIndex
     else:
       result = n
   proc extractTensor(n: NimNode): NimNode =
     if n.kind == nnkDotExpr and $n[1] == "data":
-      result = n[0]
+      result = n[0].extractTensor
+    elif n.kind == nnkDerefExpr:
+      result = n[0].extractTensor
+    elif n.kind == nnkStmtListExpr:
+      # FIXME: I cannot think of a reliable way to protect against data race here.
+      result = n[^1].extractTensor
     else:
       result = n
   var lv, vl: seqset[NimNode]
@@ -1587,7 +1595,7 @@ proc collectTensors(n: NimNode): (seqset[NimNode], seqset[NimNode]) =
           if nkj.kind in CallNodes + {nnkConv, nnkStmtListExpr}:
             # Don't care.
             recurseAdd nkj
-          elif nkj.kind in {nnkSym, nnkDotExpr}:
+          elif nkj.kind in {nnkSym, nnkDotExpr, nnkDerefExpr}:
             var t = newNimNode(nnkBracketExpr)
             # Add the tensor symbol.
             t.add nkj.extractTensor
@@ -1625,7 +1633,8 @@ proc collectTensors(n: NimNode): (seqset[NimNode], seqset[NimNode]) =
     var t = n.copy
     for i in 1..<t.len:
       t[i] = t[i].extractIndex
-    if n[0].kind in {nnkHiddenAddr, nnkHiddenDeref} and n[0][0].kind in {nnkSym, nnkDotExpr}:
+    if n[0].kind in {nnkHiddenAddr, nnkHiddenDeref} and
+       n[0][0].kind in {nnkSym, nnkDotExpr, nnkDerefExpr}:
       # WARNING: this check may no longer work if getlhs removes these hidden nodes.
       t[0] = t[0][0].extractTensor
       lv.incl t
