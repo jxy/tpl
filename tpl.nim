@@ -378,35 +378,89 @@ template index*[id,lo,hi:static[int]](d:gTindexDummy[id,lo,hi], n:static[int]): 
 proc automaticIndex(id, lo, hi: static[int]): gTindexDummy[id,lo,hi] {.nodecl.} =
   dummyIx(id, lo, hi)
 
-macro indexingT2I1(x: typed;
-                   id1, lo1, hi1, id2, lo2, hi2: int;
-                   i1: typed; i1id, i1lo, i1hi: int): expr =
-  if id1.intval == i1id.intval and lo1.intval == i1lo.intval and hi1.intval == i1hi.intval and
-     id2.intval == i1id.intval and lo2.intval == i1lo.intval and hi2.intval == i1hi.intval:
-    error "Ambiguous indexing for: " & x.repr & "[" & i1.repr & "]"
-  elif id1.intval == i1id.intval and lo1.intval == i1lo.intval and hi1.intval == i1hi.intval:
-    result = newCall("[]", x, i1, newCall(bindsym"automaticIndex", id2, lo2, hi2))
-  elif id2.intval == i1id.intval and lo2.intval == i1lo.intval and hi2.intval == i1hi.intval:
-    result = newCall("[]", x, newCall(bindsym"automaticIndex", id1, lo1, hi1), i1)
+macro indexing(x: typed;
+               ids: openarray[int];
+               ixs: openarray[typed]; ixid: openarray[int];
+               y: untyped = nil): expr =
+  let
+    nrank = ids.len div 3
+    nix = ixs.len
+  if nix != ixid.len div 3:
+    error "indexing got indices: " & ixs.repr & "\nwith ids: " & ixid.repr
+  var
+    match = newseq[seq[bool]](nix)
+    total = newseq[int](nix)
+    nsameIx = newseq[int](nix)
+    nmatch = newseq[int](nrank)
+  for i in 0..<nix:
+    for j in (i+1)..<nix:
+      if ixid[3*i] == ixid[3*j] and
+         ixid[3*i+1] == ixid[3*j+1] and
+         ixid[3*i+2] == ixid[3*j+2]:
+        inc nsameIx[i]
+        inc nsameIx[j]
+  # echo nsameIx.repr
+  for k in 0..<nrank:
+    nmatch[k] = -1
+  for h in 0..<nix:
+    match[h].newseq(nrank)
+    for k in 0..<nrank:
+      match[h][k] = true
+      for j in 0..2:
+        match[h][k] = match[h][k] and ixid[3*h+j].intval == ids[3*k+j].intval
+      if match[h][k]:
+        inc total[h]
+    if total[h] > 0 and total[h] != nsameIx[h] + 1:
+      error "Ambiguous indexing for: " & x.repr & "[" & ixs[h].repr & "]"
+    elif total[h] == 0:
+      error "Indexing fails for: " & x.repr & "[" & ixs[h].repr & "]"
+    else:
+      for k in 0..<nrank:
+        if match[h][k] and nmatch[k] < 0:
+          nmatch[k] = h
+          break
+  if y == nil:
+    result = newCall("[]", x)
   else:
-    error "Indexing fails for: " & x.repr & "[" & i1.repr & "]"
-macro indexingEqT2I1(x: typed;
-                     id1, lo1, hi1, id2, lo2, hi2: int;
-                     i1: typed; i1id, i1lo, i1hi: int;
-                     y: typed): expr =
-  if id1.intval == i1id.intval and lo1.intval == i1lo.intval and hi1.intval == i1hi.intval and
-     id2.intval == i1id.intval and lo2.intval == i1lo.intval and hi2.intval == i1hi.intval:
-    error "Ambiguous indexing for: " & x.repr & "[" & i1.repr & "]=" & y.repr
-  elif id1.intval == i1id.intval and lo1.intval == i1lo.intval and hi1.intval == i1hi.intval:
-    result = newCall("[]=", x, i1, newCall(bindsym"automaticIndex", id2, lo2, hi2), y)
-  elif id2.intval == i1id.intval and lo2.intval == i1lo.intval and hi2.intval == i1hi.intval:
-    result = newCall("[]=", x, newCall(bindsym"automaticIndex", id1, lo1, hi1), i1, y)
-  else:
-    error "Indexing fails for: " & x.repr & "[" & i1.repr & "]=" & y.repr
+    result = newCall("[]=", x)
+  for k in 0..<nrank:
+    if nmatch[k] >= 0:
+      result.add ixs[nmatch[k]]
+    else:
+      var autoix = newCall(bindsym"automaticIndex")
+      for j in 0..2:
+        autoix.add ids[3*k+j]
+      result.add autoix
+  if y != nil:
+    result.add y
+  result = result.copy
+  # echo result.treerepr
 template `[]`*[D,V;id1,lo1,hi1,id2,lo2,hi2,i1id,i1lo,i1hi:static[int],i1ty:static[TPLIndex]](x: gT2[D,V,id1,lo1,hi1,id2,lo2,hi2], i1: AnyIndex[i1ty,i1id,i1lo,i1hi]): expr =
-  indexingT2I1(x, id1, lo1, hi1, id2, lo2, hi2, i1, i1id, i1lo, i1hi)
+  indexing(x, [id1, lo1, hi1, id2, lo2, hi2], [i1], [i1id, i1lo, i1hi])
 template `[]=`*[D,V;id1,lo1,hi1,id2,lo2,hi2,i1id,i1lo,i1hi:static[int],i1ty:static[TPLIndex]](x: gT2[D,V,id1,lo1,hi1,id2,lo2,hi2], i1: AnyIndex[i1ty,i1id,i1lo,i1hi], y: V): expr =
-  indexingEqT2I1(x, id1, lo1, hi1, id2, lo2, hi2, i1, i1id, i1lo, i1hi, y)
+  indexing(x, [id1, lo1, hi1, id2, lo2, hi2], [i1], [i1id, i1lo, i1hi], y)
+template `[]`*[D,V;id1,lo1,hi1,id2,lo2,hi2,id3,lo3,hi3,i1id,i1lo,i1hi:static[int],i1ty:static[TPLIndex]](x: gT3[D,V,id1,lo1,hi1,id2,lo2,hi2,id3,lo3,hi3], i1: AnyIndex[i1ty,i1id,i1lo,i1hi]): expr =
+  indexing(x, [id1, lo1, hi1, id2, lo2, hi2, id3, lo3, hi3], [i1], [i1id, i1lo, i1hi])
+template `[]=`*[D,V;id1,lo1,hi1,id2,lo2,hi2,id3,lo3,hi3,i1id,i1lo,i1hi:static[int],i1ty:static[TPLIndex]](x: gT3[D,V,id1,lo1,hi1,id2,lo2,hi2,id3,lo3,hi3], i1: AnyIndex[i1ty,i1id,i1lo,i1hi], y: V): expr =
+  indexing(x, [id1, lo1, hi1, id2, lo2, hi2, id3, lo3, hi3], [i1], [i1id, i1lo, i1hi], y)
+template `[]`*[D,V;id1,lo1,hi1,id2,lo2,hi2,id3,lo3,hi3,id4,lo4,hi4,i1id,i1lo,i1hi:static[int],i1ty:static[TPLIndex]](x: gT4[D,V,id1,lo1,hi1,id2,lo2,hi2,id3,lo3,hi3,id4,lo4,hi4], i1: AnyIndex[i1ty,i1id,i1lo,i1hi]): expr =
+  indexing(x, [id1, lo1, hi1, id2, lo2, hi2, id3, lo3, hi3, id4, lo4, hi4], [i1], [i1id, i1lo, i1hi])
+template `[]=`*[D,V;id1,lo1,hi1,id2,lo2,hi2,id3,lo3,hi3,id4,lo4,hi4,i1id,i1lo,i1hi:static[int],i1ty:static[TPLIndex]](x: gT4[D,V,id1,lo1,hi1,id2,lo2,hi2,id3,lo3,hi3,id4,lo4,hi4], i1: AnyIndex[i1ty,i1id,i1lo,i1hi], y: V): expr =
+  indexing(x, [id1, lo1, hi1, id2, lo2, hi2, id3, lo3, hi3, id4, lo4, hi4], [i1], [i1id, i1lo, i1hi], y)
+
+template `[]`*[D,V;id1,lo1,hi1,id2,lo2,hi2,id3,lo3,hi3,i1id,i1lo,i1hi,i2id,i2lo,i2hi:static[int],i1ty,i2ty:static[TPLIndex]](x: gT3[D,V,id1,lo1,hi1,id2,lo2,hi2,id3,lo3,hi3], i1: AnyIndex[i1ty,i1id,i1lo,i1hi], i2: AnyIndex[i2ty,i2id,i2lo,i2hi]): expr =
+  indexing(x, [id1, lo1, hi1, id2, lo2, hi2, id3, lo3, hi3], [i1, i2], [i1id, i1lo, i1hi, i2id, i2lo, i2hi])
+template `[]=`*[D,V;id1,lo1,hi1,id2,lo2,hi2,id3,lo3,hi3,i1id,i1lo,i1hi,i2id,i2lo,i2hi:static[int],i1ty,i2ty:static[TPLIndex]](x: gT3[D,V,id1,lo1,hi1,id2,lo2,hi2,id3,lo3,hi3], i1: AnyIndex[i1ty,i1id,i1lo,i1hi], i2: AnyIndex[i2ty,i2id,i2lo,i2hi], y: V): expr =
+  indexing(x, [id1, lo1, hi1, id2, lo2, hi2, id3, lo3, hi3], [i1, i2], [i1id, i1lo, i1hi, i2id, i2lo, i2hi], y)
+template `[]`*[D,V;id1,lo1,hi1,id2,lo2,hi2,id3,lo3,hi3,id4,lo4,hi4,i1id,i1lo,i1hi,i2id,i2lo,i2hi:static[int],i1ty,i2ty:static[TPLIndex]](x: gT4[D,V,id1,lo1,hi1,id2,lo2,hi2,id3,lo3,hi3,id4,lo4,hi4], i1: AnyIndex[i1ty,i1id,i1lo,i1hi], i2: AnyIndex[i2ty,i2id,i2lo,i2hi]): expr =
+  indexing(x, [id1, lo1, hi1, id2, lo2, hi2, id3, lo3, hi3, id4, lo4, hi4], [i1, i2], [i1id, i1lo, i1hi, i2id, i2lo, i2hi])
+template `[]=`*[D,V;id1,lo1,hi1,id2,lo2,hi2,id3,lo3,hi3,id4,lo4,hi4,i1id,i1lo,i1hi,i2id,i2lo,i2hi:static[int],i1ty,i2ty:static[TPLIndex]](x: gT4[D,V,id1,lo1,hi1,id2,lo2,hi2,id3,lo3,hi3,id4,lo4,hi4], i1: AnyIndex[i1ty,i1id,i1lo,i1hi], i2: AnyIndex[i2ty,i2id,i2lo,i2hi], y: V): expr =
+  indexing(x, [id1, lo1, hi1, id2, lo2, hi2, id3, lo3, hi3, id4, lo4, hi4], [i1, i2], [i1id, i1lo, i1hi, i2id, i2lo, i2hi], y)
+
+template `[]`*[D,V;id1,lo1,hi1,id2,lo2,hi2,id3,lo3,hi3,id4,lo4,hi4,i1id,i1lo,i1hi,i2id,i2lo,i2hi,i3id,i3lo,i3hi:static[int],i1ty,i2ty,i3ty:static[TPLIndex]](x: gT4[D,V,id1,lo1,hi1,id2,lo2,hi2,id3,lo3,hi3,id4,lo4,hi4], i1: AnyIndex[i1ty,i1id,i1lo,i1hi], i2: AnyIndex[i2ty,i2id,i2lo,i2hi], i3: AnyIndex[i3ty,i3id,i3lo,i3hi]): expr =
+  indexing(x, [id1, lo1, hi1, id2, lo2, hi2, id3, lo3, hi3, id4, lo4, hi4], [i1, i2, i3], [i1id, i1lo, i1hi, i2id, i2lo, i2hi, i3id, i3lo, i3hi])
+template `[]=`*[D,V;id1,lo1,hi1,id2,lo2,hi2,id3,lo3,hi3,id4,lo4,hi4,i1id,i1lo,i1hi,i2id,i2lo,i2hi,i3id,i3lo,i3hi:static[int],i1ty,i2ty,i3ty:static[TPLIndex]](x: gT4[D,V,id1,lo1,hi1,id2,lo2,hi2,id3,lo3,hi3,id4,lo4,hi4], i1: AnyIndex[i1ty,i1id,i1lo,i1hi], i2: AnyIndex[i2ty,i2id,i2lo,i2hi], i3: AnyIndex[i3ty,i3id,i3lo,i3hi], y: V): expr =
+  indexing(x, [id1, lo1, hi1, id2, lo2, hi2, id3, lo3, hi3, id4, lo4, hi4], [i1, i2, i3], [i1id, i1lo, i1hi, i2id, i2lo, i2hi, i3id, i3lo, i3hi], y)
 
 template genUnaryOp(op: untyped): stmt =
   template op*[D,V;id1,lo1,hi1:static[int]](x: gT1[D,V,id1,lo1,hi1]): expr =
