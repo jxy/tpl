@@ -1,8 +1,10 @@
 import math
 import unittest
-import tpl
+import TPL
 
-tensorOpsSilent:
+colorOutput = false
+
+tplSilent:
   Spin = IndexType(1,4)
   Color = IndexType(1,4)
 test "Index types":
@@ -49,7 +51,7 @@ block:
 
 block:
   echo "\n* test arithmatic with indices"
-  tensorOpsSilent:
+  tplSilent:
     s2 = IndexType(3, 4)
     c3 = IndexType(0, 2)
   var
@@ -85,7 +87,7 @@ test "Dummy":
       m[i, Spin.index(1)] = m[i, Spin.index(1)] + 100.0
       echo "  m[",i,",1] = ",m[i,Spin.index(1)]
   echo "\n  * test auto loop dummy"
-  tensorOpsSilent:
+  tplSilent:
     m[a, b] = (a-1.0)*10.0/float(10^b)
     echo "  m =\n", m
     x[a] = if a == 1: 1.0 elif a == 2: 1e-2 elif a == 3: 1e-4 else: 1e-6
@@ -96,7 +98,7 @@ test "Dummy":
   var
     c, d = a.dummy
     X, I: Tensor([Spin, Spin], float)
-  tensorOpsSilent:
+  tplSilent:
     I[a,a] = 1.0
     echo "  I =\n", I
     mn = 0
@@ -135,7 +137,7 @@ test "Dummy":
 
 test "Nested tensors":
   echo "\n* test nested"
-  tensorOpsSilent:
+  tplSilent:
     inT = IndexType(0,1)
   type
     In = Tensor([inT], float)
@@ -144,7 +146,7 @@ test "Nested tensors":
     i = inT.dummy
     mu, nu = Color.dummy
     m: cm
-  tensorOpsSilent:
+  tplSilent:
     m[mu,nu][i] = 1.0*i*nu + 0.1*mu
     echo m
   check(m[mu.index 2, nu.index 1][i.index 0] == 0.2)

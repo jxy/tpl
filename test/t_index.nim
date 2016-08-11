@@ -1,7 +1,9 @@
-import tpl
+import TPL
 import unittest
 
-proc main {.tensorOpsSilent.} =
+colorOutput = false
+
+proc main {.tplSilent.} =
   I = IndexType(3)
   J = IndexType(1,2)
   var

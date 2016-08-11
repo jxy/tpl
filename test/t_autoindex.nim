@@ -1,6 +1,6 @@
-import tpl
+import TPL
 
-tensorOpsSilent:
+tplSilent:
   S = IndexType(0,1)
   C = IndexType(0,2)
 type
@@ -20,7 +20,7 @@ var
   csv: CSV
   i, j = S.dummy
   a, b = C.dummy
-tensorOps:
+tpl:
   sv[i] = 1.0+i
   echo "sv = ", sv
   cv[a] = 0.1*(1.0+a)

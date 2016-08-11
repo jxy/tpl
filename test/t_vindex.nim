@@ -1,7 +1,9 @@
-import tpl
+import TPL
 import unittest
 
-proc main {.tensorOpsSilent.} =
+colorOutput = false
+
+proc main {.tplSilent.} =
   var vlen = 4
   H = IndexType(1,5)
   I = IndexType(vlen)

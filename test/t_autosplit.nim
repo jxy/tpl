@@ -1,7 +1,9 @@
 import unittest
-import tpl
+import TPL
 
-tensorOpsSilent:
+colorOutput = false
+
+tplSilent:
   S = IndexType(0,1)
   C = IndexType(0,2)
 type
@@ -21,7 +23,7 @@ var
   i, j = S.dummy
   a, b = C.dummy
 test "Automatic split":
-  tensorOps:
+  tpl:
     sv[i] = 1.0+i
     cv[a] = 0.1*(1.0+a)
     cm[a,b] = a+0.1*b

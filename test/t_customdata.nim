@@ -1,6 +1,8 @@
 import unittest
 import strutils
-import tpl
+import TPL
+
+colorOutput = false
 
 const
   nc = 3
@@ -19,7 +21,7 @@ proc `[]=`(x: var D, c, s: int, y: int) =
   x[c+s*nc] = y
 
 
-tensorOpsSilent:
+tplSilent:
   C = IndexType(0,nc-1)
   S = IndexType(0,ns-1)
 type
@@ -30,7 +32,7 @@ var
   d: T
 newseq(d.data, nc*ns)           # direct .data access
 test "Custom data layout":
-  tensorOps:
+  tpl:
     d[a,i] = 10*a+i
     check(d.data == @[0, 10, 20, 1, 11, 21, 2, 12, 22, 3, 13, 23])
     echo d

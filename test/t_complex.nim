@@ -1,11 +1,13 @@
 import math
 import unittest
-import tpl
+import TPL
+
+colorOutput = false
 
 var
   x, y, z: Tensor([Complex], float)
 test "complex multiplications":
-  tensorOpsSilent:
+  tplSilent:
     x = sqrt 0.5
     y = x
     echo "x = sqrt 0.5 = ", x
@@ -40,7 +42,7 @@ test "complex multiplications":
     check z.im == -0.29289321881345187
 
 test "complex vectors":
-  tensorOpsSilent:
+  tplSilent:
     I = IndexType(0,2)
     var
       v, u: Tensor([Complex, I], float)

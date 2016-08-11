@@ -1,7 +1,9 @@
 import unittest
-import tpl
+import TPL
 
-tensorOpsSilent:
+colorOutput = false
+
+tplSilent:
   Ix = IndexType(0,2)
 type
   V = Tensor([Ix], float)
@@ -13,7 +15,7 @@ var
   m1, m2, m3, m4: M
 
 test "Overlapping statements":
-  tensorOpsSilent:
+  tplSilent:
     echo "Fusion should separate overlapping statements."
     v1[i] = 0.1 * i
     m1[i,j] = 0.1 * j + i
@@ -40,12 +42,12 @@ test "Overlapping statements":
     check(v3[i] == v5[i])
     check(m3[i,j] == m4[i,j])
 test "Fused accumulations":
-  tensorOps:
+  tpl:
     echo "\nTry fused accumulations (check the compiler output!)"
     x = 0
     v1 = m1
     x += v1
-  tensorOpsSilent:
+  tplSilent:
     echo "v1 = m1 = ", v1
     echo "x += v1 = ", x
     t[i] = 1.1*i
@@ -61,12 +63,12 @@ test "Fused accumulations":
     check(m3[i,Ix.index 0] == m3[i,j])
     v3 = 0
 test "Fused vector ops":
-  tensorOps:
+  tpl:
     echo "\nThese should fuse completely (check the compiler output!)"
     v2 = 0
     v2 += v1 + 0.1
     v3 += m1 * v2
-  tensorOpsSilent:
+  tplSilent:
     echo "v2 = 0; v2 += v1 + 0.1 = ", v2
     echo "v3 += m1 * v2 = ", v3
     t[i] = 1.1*i+0.1
