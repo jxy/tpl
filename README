@@ -1,0 +1,134 @@
+NAME
+     TPL - Tensor Programming Library
+
+SYNOPSIS
+     tpl statements
+
+     IndexType number
+     index type, number
+     dummy indexType
+
+     Tensor [indexType, ...], elementType
+     Tensor [indexType, ...], elementType, containerType
+
+     T[i, ...]
+
+DESCRIPTION
+     TPL, a library in Nim, provides a familiar tensor notation
+     for working with the Quantum EXpression (QEX) lattice field
+     theory framework.  It uses compile time macros to generate code
+     from statements of tensor expressions, and in doing so transfer
+     the complexity from user applications to TPL's code base.
+
+     tpl
+          The macro that receives a list of high level tensor
+          statements and generate low level code.
+     IndexType number
+          Generates an index typ that runs from 0 with index length
+          given by the number. Must be used in an assignment within
+          tpl block.
+     index type, number
+          Create a concrete index variable that holds the index
+          number.
+     dummy indexType
+          Create a dummy index variable that creates loops over the
+          index range automatically.
+     Tensor [indexType, ...], elementType
+     Tensor [indexType, ...], elementType, containerType
+          Generates a tensor type that has its index types
+          listed between the brackets.  If the optional container
+          type is present, a variable created with this tensor
+          type must have an corresponding object to initialize.
+          Tensor types have basic numerical operations defined.
+          Most of the functions applicable to the element will
+          have the statement expanded in loops.  Tensors support
+          contraction between indices of the same type.
+     T[i, ...]
+          Basic tensor indexing operation uses brackets and a list of
+          indices within.  Indices can be omitted where no confusion
+          can arise from the type system point of view.
+
+EXAMPLE
+     From file test/x_simple.nim.  Compile and run it with
+          nim c -r test/x_simple.nim
+
+     import TPL
+     tpl:
+       S = IndexType(4)
+       C = IndexType(3)
+       type
+         SV = Tensor([S], float)
+         CV = Tensor([C], float)
+         CM = Tensor([C,C], float)
+         CSV = Tensor([C,S], float)
+         SCM = Tensor([S,C,C], float)
+       var
+         x: float
+         sv: SV
+         cv: CV
+         cm: CM
+         csv: CSV
+         scm: SCM
+         i = S.dummy
+         a = C.dummy
+       sv[i] = 1.0+i
+       cv[a] = 0.1*(1.0+a)
+       csv = sv*cv
+       scm = csv*cv
+       x = sv*cv*scm*cv
+       cm = scm[S.index 2]
+       echo "scm[",2,"] =\n",cm
+       echo "sv = ",sv
+       echo "cv = ",cv
+       echo "csv = ",csv
+       echo "x = sv*cv*scm*cv = ", x
+FILES
+     TPL.nim
+          The module for end user to import.
+     test/x_*.nim
+          Examples.
+     test/t_*.nim
+          Tests and more examples.
+     LICENSE
+          MIT license.
+
+SOURCE
+     TPL.nim
+          Export end user APIs.
+     TPL/extras.nim
+          Extra utilities (exported via TPL.nim) that depends on TPL.
+     TPL/indexTypes.nim
+     TPL/tensorTypes.nim
+          Generic index and tensor type definitions.
+     TPL/debug.nim
+          Compile time debug routines.
+     TPL/ops.nim
+          Generic operations for tensor and index types.
+     TPL/seqdict.nim
+     TPL/seqset.nim
+     TPL/utils.nim
+          Other shared utilities for this library.
+     TPL/T*.nim
+          Transformations.
+     TPL/tensor_data_default.nim
+          Default array container.
+     TPL/X*.nim
+          Experimental/unusable modules.
+     test/x_*.nim
+          Examples.
+     test/t_*.nim
+          Testing individual features.
+
+SEE ALSO
+     QEX: Quantum EXpressions
+          https://github.com/jcosborn/qex
+     Nim
+          http://nim-lang.org
+
+BUGS
+     Numerous.  Not fully functional.  Not intended for general use.
+     APIs will change.  Things will break.
+
+     Temporary tensor creation is innefficient.
+
+     Nim v0.14 no longer considers index types as different types.
