@@ -1,7 +1,13 @@
-import macros
-import strutils
+import macros,strutils
+import seqset,indexTypes
 
 const StmtNodes* = {nnkStmtList, nnkStmtListExpr}
+
+const autoSumFunctions* = ["=", "+=", "-=", "*=", "/=", "[]="]
+const autoSumFunctionNoBracket* = ["=", "+=", "-=", "*=", "/="]
+const autoSumOps* = ["+", "-", "*", "/"]
+
+import debug
 
 iterator pairs*(n: NimNode): (int, NimNode) =
   for i in 0..<n.len:
@@ -160,3 +166,218 @@ proc delete*[T](s: var seq[T], x: T) =
   for i, c in s:
     if c == x:
       s.delete i
+
+macro fixpoint(i: static[int], m, oldn, n: typed): untyped =
+  # Call m repeatedly on n until nothing changes, with each step
+  # type checked.  Requires m accepting a typed.
+  dbg "fixpoint:" & $m & ":" & $i & " => ", n, TPLDebug.flow
+  if i == 0 or oldn != n:
+    result = newCall(bindsym"fixpoint", newLit(i+1), m, n, newCall(m, n))
+  else:
+    result = n
+template fixpointcall*(m, n: typed): untyped =
+  fixpoint(0, m, newEmptyNode(), n)
+
+proc collectTensors*(n: NimNode): (seqset[NimNode], seqset[NimNode]) =
+  # Returns tensors or scalars in the form of Par(BracketExpr())
+  # in two lists: those used as lvalues and those did not.  Note:
+  # scalars (symbol not indexed with []) are only returned when
+  # they are used as a var (lvalue).
+  # echo "collectTensors:n <= # ", n.lisprepr
+  proc extractIndex(n: NimNode): NimNode =
+    if n.kind in CallNodes and $n[0] == "indexValue":
+      result = n[1].extractIndex
+    elif n.kind in CallNodes and $n[0] == "TPLDummyConv":
+      result = n[1].extractIndex
+    else:
+      result = n
+  proc extractTensor(n: NimNode): NimNode =
+    if n.kind == nnkDotExpr and $n[1] == "data":
+      result = n[0].extractTensor
+    elif n.kind == nnkDerefExpr:
+      result = n[0].extractTensor
+    elif n.kind == nnkStmtListExpr:
+      # FIXME: I cannot think of a reliable way to protect against data race here.
+      result = n[^1].extractTensor
+    else:
+      result = n
+  var lv, vl: seqset[NimNode]
+  lv.init
+  vl.init
+  template recurseAdd(nn: NimNode): untyped =
+    let (a, b) = nn.collectTensors
+    for x in a:
+      lv.incl x
+    for x in b:
+      vl.incl x
+  if n.kind == nnkAsgn:
+    var nn = n[0].unwrap
+    if nn.kind != nnkSym:
+      error "Don't know how to extract tensors from: " & nn.treerepr & "\nin: " & n.treerepr
+    lv.incl newNimNode(nnkBracketExpr).add nn
+    recurseAdd n[0]
+    recurseAdd n[1]
+  elif n.kind in CallNodes:
+    if n[0].kind == nnkSym:
+      # echo "collectTensors:n: ", n.repr
+      var fp = n[0].symbol.getimpl[3]
+      # echo "collectTensors:fp: ", fp.repr
+      # if fp[0].kind == nnkVarTy: # Return a var (lvalue).
+      #   error "what do we do here?"
+      var k = 1
+      for i in 1..<fp.len:            # List of params.
+        let isVarParam = fp[i][^2].kind == nnkVarTy
+        for j in 0..<fp[i].len-2:
+          var nkj = n[k+j].unwrap
+          let errmsg = "Don't know how to extract tensors from: " &
+            n.treerepr & "\nwith: " & fp.treerepr &
+            "\nlooking at: " & nkj.treerepr
+          if nkj.kind in CallNodes + {nnkConv, nnkStmtListExpr}:
+            # Don't care.
+            recurseAdd nkj
+          elif nkj.kind in {nnkSym, nnkDotExpr, nnkDerefExpr}:
+            var t = newNimNode(nnkBracketExpr)
+            # Add the tensor symbol.
+            t.add nkj.extractTensor
+            # Add indices.
+            if i == 1: # The first argument to [] or []= is the tensor.
+              if $n[0] == "[]":
+                for m in 2..<n.len:
+                  t.add n[m].extractIndex
+              if $n[0] == "[]=":
+                for m in 2..<n.len-1:
+                  t.add n[m].extractIndex
+            if isVarParam:
+              lv.incl t
+            else:
+              vl.incl t
+          elif nkj.kind in nnkLiterals or
+               (nkj.kind == nnkBracketExpr and
+                nkj[0].kind == nnkSym and
+                $nkj[0].gettype[0] == "typeDesc"):
+            discard "We don't need to worry about these."
+          elif nkj.kind == nnkBracketExpr:
+            var nn = nkj[0]
+            while nn.kind == nnkBracketExpr:
+              nn = nn[0]
+            if nn.kind == nnkSym and nn.symbol.getimpl.kind == nnkBracket:
+              discard "It may be an array constant.  Ignore."
+            else:
+              error errmsg
+          else:
+            error errmsg
+        k.inc(fp[i].len-2)
+    else:
+      error "Don't know how to extract tensors from: " & n.treerepr
+  elif n.kind == nnkBracketExpr:
+    var t = n.copy
+    for i in 1..<t.len:
+      t[i] = t[i].extractIndex
+    if n[0].kind in {nnkHiddenAddr, nnkHiddenDeref} and
+       n[0][0].kind in {nnkSym, nnkDotExpr, nnkDerefExpr}:
+      # WARNING: this check may no longer work if getlhs removes these hidden nodes.
+      t[0] = t[0][0].extractTensor
+      lv.incl t
+    elif n[0].kind in {nnkSym, nnkDotExpr}:
+      t[0] = t[0].extractTensor
+      vl.incl t
+    elif n[0].kind in CallNodes:
+      t[0] = t[0].extractTensor
+      var fp = n[0][0].symbol.getimpl[3]
+      if fp[0].kind == nnkVarTy: # Return a var (lvalue).
+        lv.incl t
+      else:
+        vl.incl t
+      for c in n[0]:
+        recurseAdd c
+    else:
+      var nn = n[0]
+      while nn.kind == nnkBracketExpr:
+        nn = nn[0]
+      if nn.kind == nnkSym and nn.symbol.getimpl.kind == nnkBracket:
+        discard "It may be an array constant.  Ignore."
+      else:
+        error "Don't know how to extract tensors from: " & n.treerepr
+  else:
+    for c in n:
+      recurseAdd c
+  result = (lv, vl)
+  # echo "collectTensors:result => ", result.repr
+proc indexedTensor*(m: NimNode): NimNode =
+  var n = m.unwrap
+  if n.kind in CallNodes and $n[0] in ["[]", "[]="]:
+    result = n[1]
+  elif n.kind == nnkBracketExpr:
+    result = n[0]
+  else:                         # What if a HiddenAddr?
+    result = newEmptyNode()
+type
+  dummyTree* = object
+    idx*: seqset[NimNode]
+    branch*: seq[dummyTree]
+proc genDummyTree*(n: NimNode): dummyTree =
+  # echo "\n>>>> genDummyTree"
+  # echo n.treerepr
+  proc skipDummyCheck(n: NimNode, i: int): bool =
+    # result = n.kind notin CallNodes + {
+    #   nnkStmtList, nnkBlockStmt, nnkBracket,
+    #   nnkIfStmt, nnkWhenStmt, nnkCaseStmt, nnkWhileStmt, nnkTryStmt,
+    #   nnkHiddenDeref, nnkHiddenAddr, nnkHiddenStdConv
+    # }
+    result = n.kind in {nnkConstSection, nnkVarSection, nnkLetSection}
+    result = result or n.kind == nnkForStmt and i < 2 # We check only the body.
+    # if result:
+    #   echo "skipDummyCheck ", i, " ", n.lisprepr
+    #   echo "    => ", result
+  proc g(n: NimNode): dummyTree =
+    result.idx.init
+    newseq result.branch, n.len
+    let d = n.dummyFromConverter
+    if d.kind != nnkNilLit:
+      # echo "   result.idx: ", result.idx.repr
+      # echo "-- dummy: ", n.lisprepr
+      result.idx.incl d
+      # echo "   result.idx: ", result.idx.repr
+    else:
+      # echo "subtree result.idx: ", result.idx.repr
+      for i, c in n:
+        let t = if n.skipDummyCheck i: newEmptyNode().g else: c.g
+        result.idx += t.idx
+        # echo "     += ", t.idx.repr
+        # echo "        result.idx: ", result.idx.repr
+        result.branch[i] = t
+      # echo "subtree result.idx: ", result.idx.repr
+  result = n.g
+  # echo "<<<< genDummyTree =>\n", result.treerepr
+proc getlhsix*(s: seq[dummyTree]): seqset[NimNode] =
+  result.init
+  for i in 0..<s.len-1: # Every but last belongs to the left hand side.
+    result.incl s[i].idx
+proc getrhsix*(s: seq[dummyTree]): seqset[NimNode] =
+  result.init
+  if s.len > 0:
+    result.incl s[^1].idx
+proc isAutoSumStmt*(n: NimNode): bool =
+  result = n.kind == nnkAsgn or (n.kind in CallNodes and $n[0] in autoSumFunctions)
+proc getlhs*(n: NimNode): NimNode =
+  # echo "getlhs: ", n.treerepr
+  if n.kind == nnkAsgn:
+    result = n[0]
+  elif n.kind in CallNodes and $n[0] in autoSumFunctionNoBracket and n.len == 3:
+    result = n[1]
+  elif n.kind in CallNodes and $n[0] == "[]=":
+    result = newNimNode(nnkBracketExpr)
+    for i in 1..<n.len-1:
+      result.add n[i]
+  else:
+    error "Failed to get the LHS of NimNode:\n" & n.treerepr
+proc reAssembleBinOp*(n, lhs, rhs: NimNode): NimNode =
+  if n.kind == nnkAsgn or
+     (n.kind in CallNodes and $n[0] == "[]=" and lhs.kind == nnkBracketExpr):
+    result = wrappedAssign(lhs, rhs)
+  elif n.kind in CallNodes and n.len == 3:
+    result = n.copyNimNode.add(n[0], lhs, rhs.newPar)
+    result = result.callNodesWrap
+  else:
+    error "Don't know how to reassemble binary op for\n" &
+      n.repr & "\nfrom lhs\n" & lhs.repr & "\nand rhs\n" & rhs.repr
