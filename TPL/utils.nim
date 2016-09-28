@@ -212,11 +212,16 @@ proc collectTensors*(n: NimNode): (seqset[NimNode], seqset[NimNode]) =
       vl.incl x
   if n.kind == nnkAsgn:
     var nn = n[0].unwrap
-    if nn.kind != nnkSym:
+    if nn.kind == nnkSym:    # scalar
+      lv.incl newNimNode(nnkBracketExpr).add nn
+      recurseAdd n[1]
+    elif nn.kind == nnkBracketExpr and nn[0].kind == nnkSym:    # array
+      var t = newNimNode(nnkBracketExpr).add nn[0]
+      for m in 1..<nn.len:
+        t.add nn[m].extractIndex
+      lv.incl t
+    else:
       error "Don't know how to extract tensors from: " & nn.treerepr & "\nin: " & n.treerepr
-    lv.incl newNimNode(nnkBracketExpr).add nn
-    recurseAdd n[0]
-    recurseAdd n[1]
   elif n.kind in CallNodes:
     if n[0].kind == nnkSym:
       # echo "collectTensors:n: ", n.repr
@@ -260,10 +265,21 @@ proc collectTensors*(n: NimNode): (seqset[NimNode], seqset[NimNode]) =
             var nn = nkj[0]
             while nn.kind == nnkBracketExpr:
               nn = nn[0]
-            if nn.kind == nnkSym and nn.symbol.getimpl.kind == nnkBracket:
-              discard "It may be an array constant.  Ignore."
+            if nn.kind == nnkSym:
+              if nn.symbol.getimpl.kind == nnkBracket:
+                discard "It may be an array constant.  Ignore."
+              else:
+                var t = newNimNode(nnkBracketExpr).add nn
+                var nnn = nkj
+                while nnn.kind == nnkBracketExpr:
+                  for m in 1..<nnn.len:
+                    t.insert(m,nnn[m].extractIndex)
+                  nnn = nnn[0]
             else:
               error errmsg
+          elif nkj.kind in {nnkIfExpr,nnkBracket}:
+            for c in nkj:
+              recurseAdd c
           else:
             error errmsg
         k.inc(fp[i].len-2)
@@ -294,8 +310,17 @@ proc collectTensors*(n: NimNode): (seqset[NimNode], seqset[NimNode]) =
       var nn = n[0]
       while nn.kind == nnkBracketExpr:
         nn = nn[0]
-      if nn.kind == nnkSym and nn.symbol.getimpl.kind == nnkBracket:
-        discard "It may be an array constant.  Ignore."
+      if nn.kind == nnkSym:
+        if nn.symbol.getimpl.kind == nnkBracket:
+          discard "It may be an array constant.  Ignore."
+        else:    # array
+          t = newNimNode(nnkBracketExpr).add nn
+          var nnn = n
+          while nnn.kind == nnkBracketExpr:
+            for m in 1..<nnn.len:
+              t.insert(m,nnn[m].extractIndex)
+            nnn = nnn[0]
+            lv.incl t    # Impossible to see if it's an lvalue.
       else:
         error "Don't know how to extract tensors from: " & n.treerepr
   else:
