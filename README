@@ -15,7 +15,7 @@ SYNOPSIS
 
 DESCRIPTION
      TPL, a library in Nim, provides a familiar tensor notation
-     for working with the Quantum EXpression (QEX) lattice field
+     for working with the Quantum EXpressions (QEX) lattice field
      theory framework.  It uses compile time macros to generate code
      from statements of tensor expressions, and in doing so transfer
      the complexity from user applications to TPL's code base.
@@ -82,6 +82,7 @@ EXAMPLE
        echo "cv = ",cv
        echo "csv = ",csv
        echo "x = sv*cv*scm*cv = ", x
+
 FILES
      TPL.nim
           The module for end user to import.
@@ -129,6 +130,6 @@ BUGS
      Numerous.  Not fully functional.  Not intended for general use.
      APIs will change.  Things will break.
 
-     Temporary tensor creation is innefficient.
+     Temporary tensor creation is inefficient.
 
      Nim v0.14 no longer considers index types as different types.

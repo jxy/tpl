@@ -18,7 +18,7 @@ tpl:
     scm: SCM
     i = S.dummy
     a = C.dummy
-  # sv+/ .*cv+/ .*"1 (scm=:(csv=:(sv=:1+i.4)*/cv)*/cv)+/ .*"2 1 cv=:0.1*1+i.3
+  # 0.588=sv+.×cv+.×⍤1(scm←(csv←(sv←⍳4)∘.×cv)∘.×cv)+.×⍤2 1cv←0.1×⍳3
   sv[i] = 1.0+i
   cv[a] = 0.1*(1.0+a)
   csv = sv*cv
