@@ -177,7 +177,7 @@ proc unindexedOp(tmp: NimNode, xrank, yrank: int): NimNode =
 macro genUnIndexedOps(n: static[int]): untyped =
   result = quote do:
     template genBinaryOp(op: untyped): untyped =
-      template op*[lD,rD,lV,rV;lid,llo,lhi,rid,rlo,rhi:static[int]](x: xtype, y: ytype): untyped =
+      template op*[lD,rD,lV,rV;lid,llo,lhi,rid,rlo,rhi:static[int]](x: var xtype, y: ytype): untyped =
         op(x, y)
   result.expectKind nnkStmtList
   result[0].expectKind nnkTemplateDef

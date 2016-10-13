@@ -132,4 +132,6 @@ BUGS
 
      Temporary tensor creation is inefficient.
 
+     Nim v0.15 breaks macros working on `+='.
+
      Nim v0.14 no longer considers index types as different types.

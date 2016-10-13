@@ -25,8 +25,8 @@ type
 type
   gTindexUninitialized*[id,lo,hi:static[int]] = AnyIndex[TPLIndex.raw,id,lo,hi]
   gTindex*[id,lo,hi:static[int]] = AnyIndex[TPLIndex.index,id,lo,hi]
-converter TPLIndexConv*[id,lo,hi:static[int]](i: gTindex[id,lo,hi]): int = i.value
-converter TPLIndexConv*[id,lo,hi:static[int]](i: gTindex[id,lo,hi]): float = i.value.float
+converter TPLIndexConv*[id,lo,hi:static[int]](i: AnyIndex[TPLIndex.index,id,lo,hi]): int = i.value
+converter TPLIndexConv*[id,lo,hi:static[int]](i: AnyIndex[TPLIndex.index,id,lo,hi]): float = i.value.float
 
 var IndexLength {.compileTime.} = newseqdict[int, NimNode]()
 macro savedIndexLength(n: static[int]): untyped =
@@ -68,7 +68,7 @@ iterator indices*(id, lo, hi: static[int]): gTindex[id,lo,hi] =
 iterator items*[ty:static[TPLIndex];id,lo,hi:static[int]](t: typedesc[AnyIndex[ty,id,lo,hi]]): gTindex[id,lo,hi] =
   iterateIndices(id, lo, hi)
 
-proc `$`*[id,lo,hi:static[int]](x: gTindex[id,lo,hi]): string =
+proc `$`*[id,lo,hi:static[int]](x: AnyIndex[TPLIndex.index,id,lo,hi]): string =
   when hi < lo:
     $x.value & ":IdxV[" & $id & "," & $lo & "," & $(savedIndexLength(id)+lo-1) & "]"
   else:
@@ -123,7 +123,7 @@ template staticInbound(n, lo, hi: static[int]): expr =
       when n < lo or n > hi:
         error "index, " & $n & ", out of bounds [" & $lo & "," & $hi & "]"
 
-proc indexValue*[id,lo,hi:static[int]](ix: gTindex[id,lo,hi]): int {.inline.} = ix.value
+proc indexValue*[id,lo,hi:static[int]](ix: AnyIndex[TPLIndex.index,id,lo,hi]): int {.inline.} = ix.value
 
 proc index*[ty:static[TPLIndex];id,lo,hi:static[int]](t:typedesc[AnyIndex[ty,id,lo,hi]], n:static[int]): gTindex[id,lo,hi] {.inline.} =
   n.staticInbound lo, hi
@@ -135,7 +135,7 @@ template index*[ty:static[TPLIndex];id,lo,hi:static[int]](t:AnyIndex[ty,id,lo,hi
 template index*[ty:static[TPLIndex];id,lo,hi:static[int]](t:AnyIndex[ty,id,lo,hi], n:static[int]): expr =
   index(type(t), n)
 
-proc `index=`*[id,lo,hi:static[int]](ix:var gTindex[id,lo,hi], n:static[int]) {.inline.} =
+proc `index=`*[id,lo,hi:static[int]](ix:var AnyIndex[TPLIndex.index,id,lo,hi], n:static[int]) {.inline.} =
   n.staticInbound lo, hi
   ix.value = n
 
@@ -154,9 +154,9 @@ macro nthIndex*(n: static[int], ixnums: varargs[int]): untyped =
 # dummy index type
 type
   gTindexDummy*[id,lo,hi:static[int]] = AnyIndex[TPLIndex.dummy,id,lo,hi]
-converter TPLDummyConv*[id,lo,hi:static[int]](i: gTindexDummy[id,lo,hi]): gTindex[id,lo,hi] {.nodecl.} = index(i)
-converter TPLDummyConv*[id,lo,hi:static[int]](i: gTindexDummy[id,lo,hi]): int {.nodecl.} = discard
-converter TPLDummyConv*[id,lo,hi:static[int]](i: gTindexDummy[id,lo,hi]): float {.nodecl.} = discard
+converter TPLDummyConv*[id,lo,hi:static[int]](i: AnyIndex[TPLIndex.dummy,id,lo,hi]): gTindex[id,lo,hi] {.nodecl.} = index(i)
+converter TPLDummyConv*[id,lo,hi:static[int]](i: AnyIndex[TPLIndex.dummy,id,lo,hi]): int {.nodecl.} = discard
+converter TPLDummyConv*[id,lo,hi:static[int]](i: AnyIndex[TPLIndex.dummy,id,lo,hi]): float {.nodecl.} = discard
 proc dummyFromConverter*(n: NimNode): NimNode =
   # echo "dummyFromConverter: <= ", n.lisprepr
   if n.kind in CallNodes and n[0].kind == nnkSym and n[0].eqIdent("TPLDummyConv"):
@@ -166,7 +166,11 @@ proc dummyFromConverter*(n: NimNode): NimNode =
     # echo "call type: ", n[0].gettype.lisprepr
     # echo "call Impl:\n", f.treerepr
     if f.kind == nnkConverterDef and
-       ((t[0] == bindsym"AnyIndex" and t[1].intval == int(TPLIndex.dummy)) or
+       ((t[0] == bindsym"AnyIndex" and
+         ((t[1].kind == nnkIntLit and t[1].intval == int(TPLIndex.dummy)) or
+          (t[1].kind == nnkSym and $t[1] == "dummy") # can't bindsym"dummy", other safer way?
+         )
+        ) or
         t[0] == bindsym"gTindexDummy"):
       result = n[1]
     else:
@@ -177,7 +181,8 @@ proc dummyFromConverter*(n: NimNode): NimNode =
       # echo n1[0].symbol.getimpl.treerepr
       let t = n1[0].symbol.getimpl[3][1][1]
       # echo t.treerepr
-      if t[0] == bindsym"gTindexDummy":
+      if t[0] == bindsym"gTindexDummy" or
+         (t[0] == bindsym"AnyIndex" and $t[1] == "dummy"):
         result = n[1]
       else:
         error "dummyFromConverter got:\n" & n.treerepr & "\nwith parameter type: " & t.lisprepr
@@ -190,15 +195,15 @@ proc dummy*[ty:static[TPLIndex];id,lo,hi:static[int]](t: AnyIndex[ty,id,lo,hi]):
 proc dummyIx*(id,lo,hi: static[int]): gTindexDummy[id,lo,hi] =
   result = type(result)(value: lo)
 
-iterator items*[id,lo,hi:static[int]](t: gTindexDummy[id,lo,hi]): gTindex[id,lo,hi] =
+iterator items*[id,lo,hi:static[int]](t: AnyIndex[TPLIndex.dummy,id,lo,hi]): gTindex[id,lo,hi] =
   iterateIndices(id, lo, hi)
-template head*[id,lo,hi:static[int]](t: gTindexDummy[id,lo,hi]): gTindex[id,lo,hi] =
+template head*[id,lo,hi:static[int]](t: AnyIndex[TPLIndex.dummy,id,lo,hi]): gTindex[id,lo,hi] =
   # This `index` call is also a template that gets expanded
   # leaving no trace of the variable `t`.
   index(t, lo)
 iterator tail*(id, lo, hi: static[int]): gTindex[id,lo,hi] =
   iterateIndices(id, lo, hi, lo + 1)
-proc tail*[id,lo,hi:static[int]](t: gTindexDummy[id,lo,hi]): gTindexDummy[id,lo,hi] {.nodecl.} = t
+proc tail*[id,lo,hi:static[int]](t: AnyIndex[TPLIndex.dummy,id,lo,hi]): gTindexDummy[id,lo,hi] {.nodecl.} = t
 
-template index*[id,lo,hi:static[int]](d:gTindexDummy[id,lo,hi], n:static[int]): expr =
-  index(gTindex[id,lo,hi], n)
+# template index*[id,lo,hi:static[int]](d:AnyIndex[TPLIndex.dummy,id,lo,hi], n:static[int]): expr =
+  # index(gTindex[id,lo,hi], n)

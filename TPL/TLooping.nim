@@ -1,10 +1,10 @@
 import macros
 import debug,utils,seqset,indexTypes
 var forDummyId {.compileTime.} = 0
-template forIndexCall[id,lo,hi:static[int]](s, f: expr, i: gTindexDummy[id,lo,hi], body: expr): untyped =
+template forIndexCall[id,lo,hi:static[int]](s, f: expr, i: AnyIndex[TPLIndex.dummy,id,lo,hi], body: expr): untyped =
   for s in f(id, lo, hi):
     body
-template forIndex[id,lo,hi:static[int]](s: expr, i: gTindexDummy[id,lo,hi], body: expr): untyped =
+template forIndex[id,lo,hi:static[int]](s: expr, i: AnyIndex[TPLIndex.dummy,id,lo,hi], body: expr): untyped =
   for s in indices(id, lo, hi):
     body
 proc dummyLoopGen(ix: seqset[NimNode], n: NimNode): NimNode =

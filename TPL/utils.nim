@@ -237,7 +237,7 @@ proc collectTensors*(n: NimNode): (seqset[NimNode], seqset[NimNode]) =
           let errmsg = "Don't know how to extract tensors from: " &
             n.treerepr & "\nwith: " & fp.treerepr &
             "\nlooking at: " & nkj.treerepr
-          if nkj.kind in CallNodes + {nnkConv, nnkStmtListExpr}:
+          if nkj.kind in CallNodes + {nnkConv, nnkStmtListExpr, nnkTypeOfExpr}:    # TypeOfExpr shouldn't be here (bug in type resolution?)
             # Don't care.
             recurseAdd nkj
           elif nkj.kind in {nnkSym, nnkDotExpr, nnkDerefExpr}:
