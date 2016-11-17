@@ -126,12 +126,13 @@ SEE ALSO
      Nim
           http://nim-lang.org
 
+COMPATBILITY
+     Requires Nim v0.15.2 or later.
+
 BUGS
      Numerous.  Not fully functional.  Not intended for general use.
      APIs will change.  Things will break.
 
      Temporary tensor creation is inefficient.
-
-     Nim v0.15 breaks macros working on `+='.
 
      Nim v0.14 no longer considers index types as different types.

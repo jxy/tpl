@@ -16,13 +16,9 @@ proc treerepr(t: dummyTree): string {.compileTime.} =
 proc newTensorAssign(lhs, rhs: NimNode): NimNode =
   # Use `+=`, assuming new tensors are initialized with 0.
   if lhs.len == 1:
-    #result = infix(lhs[0], "+=", rhs)
-    result = newAssignment(lhs[0], rhs)
-    #result = newAssignment(lhs[0], infix(lhs[0],"+",rhs))
+    result = infix(lhs[0], "+=", rhs)
   elif lhs.len > 1:
-    #result = infix(lhs, "+=", rhs)
-    result = newAssignment(lhs, rhs)
-    #result = newAssignment(lhs, infix(lhs,"+",rhs))
+    result = infix(lhs, "+=", rhs)
   else:
     error "Don't know how to assign rhs: " & rhs.treerepr & " to lhs: " & lhs.treerepr
 macro defTensorEq(lhs: untyped, rhs: typed): untyped =
