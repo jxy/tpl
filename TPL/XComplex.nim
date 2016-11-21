@@ -13,7 +13,7 @@ const
     [[1.0, 0.0], [0.0, -1.0]],
     [[0.0, 1.0], [1.0,  0.0]]
   ]
-template complexCoefficient(a, b, c: int): float =
+proc complexCoefficient(a, b, c: int): float {.inline.} =
   TPL_Complex_Coeff[a][b][c]
 proc complexCoeff*(a, b, c: NimNode): NimNode =
   result = newCall(bindsym"complexCoefficient",

@@ -167,7 +167,7 @@ proc delete*[T](s: var seq[T], x: T) =
     if c == x:
       s.delete i
 
-macro fixpoint(i: static[int], m, oldn, n: typed): untyped =
+macro fixpoint(i: static[int], m: untyped, oldn, n: typed): untyped =
   # Call m repeatedly on n until nothing changes, with each step
   # type checked.  Requires m accepting a typed.
   dbg "fixpoint:" & $m & ":" & $i & " => ", n, TPLDebug.flow
@@ -175,8 +175,8 @@ macro fixpoint(i: static[int], m, oldn, n: typed): untyped =
     result = newCall(bindsym"fixpoint", newLit(i+1), m, n, newCall(m, n))
   else:
     result = n
-template fixpointcall*(m, n: typed): untyped =
-  fixpoint(0, m, newEmptyNode(), n)
+macro fixpointcall*(m: untyped, n: typed): untyped =
+  result = newCall(bindsym"fixpoint", newLit(0), m, newEmptyNode(), n)
 
 proc collectTensors*(n: NimNode): (seqset[NimNode], seqset[NimNode]) =
   # Returns tensors or scalars in the form of Par(BracketExpr())
