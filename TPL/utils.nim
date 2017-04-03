@@ -132,7 +132,7 @@ proc convert*(n: NimNode, i: NimNode, j: NimNode): NimNode =
   # echo "<<<< convert"
 proc staticint*(x: NimNode): int =
   int(intVal(if x.kind == nnkSym: x.symbol.getImpl else: x))
-macro unrollfor*(i: untyped, lo, hi: int, n: untyped): stmt =
+macro unrollfor*(i: untyped, lo, hi: int, n: untyped): untyped =
   # echo "\n>>>> unrollfor"
   # echo n.treerepr
   result = newStmtList()

@@ -74,7 +74,7 @@ proc `$`*[id,lo,hi:static[int]](x: AnyIndex[TPLIndex.index,id,lo,hi]): string =
   else:
     $x.value & ":Idx[" & $id & "," & $lo & "," & $hi & "]"
 
-template uninitializedIndex(t: untyped, id, lo, hi: static[int]): expr =
+template uninitializedIndex(t: untyped, id, lo, hi: static[int]): untyped =
   const
     ci = id
     cl = lo
@@ -97,7 +97,7 @@ macro indexTypeVar(t: untyped, id, lo: static[int], hi: int): untyped =
   IndexLength.add(id, vlen)
   # echo "indexTypeVar: ", result.repr
   # echo IndexLength.repr
-template genIndexType(t: untyped, id, lo, hi: int): expr =
+template genIndexType(t: untyped, id, lo, hi: int): untyped =
   when compiles((const x = hi)):
     indexTypeStatic(t, id, lo, hi)
   else:
@@ -107,14 +107,14 @@ macro newIndexID: untyped =
   result = IndexID.newlit
   # echo "######## newIndexID: ", result.repr
   inc IndexID
-template IndexTypeDef*(t, lo, hi: untyped): expr =
+template IndexTypeDef*(t, lo, hi: untyped): untyped =
   # echo "IndexType: <= ", lo.repr, ", ", hi.repr
   genIndexType(t, newIndexID(), lo, hi)
-template IndexTypeDef*(t, size: untyped): expr =
+template IndexTypeDef*(t, size: untyped): untyped =
   # echo "IndexType: <= ", size.repr
   IndexTypeDef(t, 0, size - 1)
 
-template staticInbound(n, lo, hi: static[int]): expr =
+template staticInbound(n, lo, hi: static[int]): untyped =
   static:
     when hi < lo:
       when n < lo:
@@ -128,11 +128,11 @@ proc indexValue*[id,lo,hi:static[int]](ix: AnyIndex[TPLIndex.index,id,lo,hi]): i
 proc index*[ty:static[TPLIndex];id,lo,hi:static[int]](t:typedesc[AnyIndex[ty,id,lo,hi]], n:static[int]): gTindex[id,lo,hi] {.inline.} =
   n.staticInbound lo, hi
   result = type(result)(value: n)
-template index*[ty:static[TPLIndex];id,lo,hi:static[int]](t:typedesc[AnyIndex[ty,id,lo,hi]]): expr =
+template index*[ty:static[TPLIndex];id,lo,hi:static[int]](t:typedesc[AnyIndex[ty,id,lo,hi]]): untyped =
   index(t, lo)
-template index*[ty:static[TPLIndex];id,lo,hi:static[int]](t:AnyIndex[ty,id,lo,hi]): expr =
+template index*[ty:static[TPLIndex];id,lo,hi:static[int]](t:AnyIndex[ty,id,lo,hi]): untyped =
   index(type(t), lo)
-template index*[ty:static[TPLIndex];id,lo,hi:static[int]](t:AnyIndex[ty,id,lo,hi], n:static[int]): expr =
+template index*[ty:static[TPLIndex];id,lo,hi:static[int]](t:AnyIndex[ty,id,lo,hi], n:static[int]): untyped =
   index(type(t), n)
 
 proc `index=`*[id,lo,hi:static[int]](ix:var AnyIndex[TPLIndex.index,id,lo,hi], n:static[int]) {.inline.} =
@@ -205,5 +205,5 @@ iterator tail*(id, lo, hi: static[int]): gTindex[id,lo,hi] =
   iterateIndices(id, lo, hi, lo + 1)
 proc tail*[id,lo,hi:static[int]](t: AnyIndex[TPLIndex.dummy,id,lo,hi]): gTindexDummy[id,lo,hi] {.nodecl.} = t
 
-# template index*[id,lo,hi:static[int]](d:AnyIndex[TPLIndex.dummy,id,lo,hi], n:static[int]): expr =
+# template index*[id,lo,hi:static[int]](d:AnyIndex[TPLIndex.dummy,id,lo,hi], n:static[int]): untyped =
   # index(gTindex[id,lo,hi], n)

@@ -5,7 +5,7 @@ import tensor_data_default,indexTypes
 # tensor types
 
 # Rank-0 scalar:
-template tensorType(container, element: typedesc): expr =
+template tensorType(container, element: typedesc): untyped =
   element
 # Generate rank-n tensors:
 proc genTensor(n: int): NimNode {.compileTime.} =
@@ -46,7 +46,7 @@ proc genTensor(n: int): NimNode {.compileTime.} =
   block:
     var
       fParam = newNimNode(nnkFormalParams).add(
-        ident"expr",
+        ident"untyped",
         newNimNode(nnkIdentDefs).add(D, V, ident"typedesc", E),
         newNimNode(nnkIdentDefs))
       body = newStmtList().add(newNimNode(nnkConstSection), tTypeFull)
@@ -66,7 +66,7 @@ proc genTensor(n: int): NimNode {.compileTime.} =
       tensor = ident"tensor"
       nIndex = ident"nIndex"
       fParam = newNimNode(nnkFormalParams).add(
-        ident"expr",
+        ident"untyped",
         newIdentDefs(tensor, tTypeFull),
         newIdentDefs(nIndex, ident"int"))
     var
@@ -83,7 +83,7 @@ proc genTensor(n: int): NimNode {.compileTime.} =
       procName = newNimNode(nnkAccQuoted).add(ident"[]").postfix "*"
     var
       # fParam = newNimNode(nnkFormalParams).add(V, newIdentDefs(X, tTypeFull))
-      fParam = newNimNode(nnkFormalParams).add(ident"expr", newIdentDefs(X, tTypeFull))
+      fParam = newNimNode(nnkFormalParams).add(ident"untyped", newIdentDefs(X, tTypeFull))
       body = newNimNode(nnkBracketExpr).add(X.newDotExpr ident"data")
     for i in 1..n:
       fParam.add newIdentDefs(ident("i" & $i), iTypeAny(i))

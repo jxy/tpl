@@ -9,9 +9,9 @@ dumptree:
     D2[V;lo1,hi1,lo2,hi2:static[int]] = object
       data: array[lo2..hi2,array[lo1..hi1,V]]
 
-  template TensorDataDefault*(element: typedesc, lo1, hi1: int): expr =
+  template TensorDataDefault*(element: typedesc, lo1, hi1: int): untyped =
     D1[element, lo1, hi1]
-  template TensorDataDefault*(element: typedesc, lo1, hi1, lo2, hi2: int): expr =
+  template TensorDataDefault*(element: typedesc, lo1, hi1, lo2, hi2: int): untyped =
     D2[element, lo1, hi1, lo2, hi2]
 
   proc `[]`*[V;lo1,hi1:static[int]](x: D1[V,lo1,hi1], i1: int): V {.inline.} =
@@ -65,7 +65,7 @@ proc genTensorData(n: int): NimNode {.compileTime.} =
   block:
     var
       fParam = newNimNode(nnkFormalParams).add(
-        ident"expr",
+        ident"untyped",
         newNimNode(nnkIdentDefs).add(V, ident"typedesc", E),
         newNimNode(nnkIdentDefs))
       body = newStmtList().add(tTypeFull)
@@ -102,7 +102,7 @@ proc genTensorData(n: int): NimNode {.compileTime.} =
     procIxEq[3].add newIdentDefs(Y, V)
     procIxEq[6][0] = newAssignment(procIxEq[6][0], Y)
     result.add(procIx, procVIx, procIxEq)
-macro genTensorDatas(n: static[int]): stmt =
+macro genTensorDatas(n: static[int]): untyped =
   result = newStmtList()
   for i in 1..n:
     for c in genTensorData(i):

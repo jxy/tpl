@@ -83,37 +83,37 @@ macro indexing(x: typed;
     result.add y
   result = result.copy
   # echo result.treerepr
-template `[]`*[D,V;id1,lo1,hi1,id2,lo2,hi2,i1id,i1lo,i1hi:static[int],i1ty:static[TPLIndex]](x: gT2[D,V,id1,lo1,hi1,id2,lo2,hi2], i1: AnyIndex[i1ty,i1id,i1lo,i1hi]): expr =
+template `[]`*[D,V;id1,lo1,hi1,id2,lo2,hi2,i1id,i1lo,i1hi:static[int],i1ty:static[TPLIndex]](x: gT2[D,V,id1,lo1,hi1,id2,lo2,hi2], i1: AnyIndex[i1ty,i1id,i1lo,i1hi]): untyped =
   indexing(x, [id1, lo1, hi1, id2, lo2, hi2], [i1], [i1id, i1lo, i1hi])
-template `[]=`*[D,V;id1,lo1,hi1,id2,lo2,hi2,i1id,i1lo,i1hi:static[int],i1ty:static[TPLIndex]](x: gT2[D,V,id1,lo1,hi1,id2,lo2,hi2], i1: AnyIndex[i1ty,i1id,i1lo,i1hi], y: V): expr =
+template `[]=`*[D,V;id1,lo1,hi1,id2,lo2,hi2,i1id,i1lo,i1hi:static[int],i1ty:static[TPLIndex]](x: gT2[D,V,id1,lo1,hi1,id2,lo2,hi2], i1: AnyIndex[i1ty,i1id,i1lo,i1hi], y: V): untyped =
   indexing(x, [id1, lo1, hi1, id2, lo2, hi2], [i1], [i1id, i1lo, i1hi], y)
-template `[]`*[D,V;id1,lo1,hi1,id2,lo2,hi2,id3,lo3,hi3,i1id,i1lo,i1hi:static[int],i1ty:static[TPLIndex]](x: gT3[D,V,id1,lo1,hi1,id2,lo2,hi2,id3,lo3,hi3], i1: AnyIndex[i1ty,i1id,i1lo,i1hi]): expr =
+template `[]`*[D,V;id1,lo1,hi1,id2,lo2,hi2,id3,lo3,hi3,i1id,i1lo,i1hi:static[int],i1ty:static[TPLIndex]](x: gT3[D,V,id1,lo1,hi1,id2,lo2,hi2,id3,lo3,hi3], i1: AnyIndex[i1ty,i1id,i1lo,i1hi]): untyped =
   indexing(x, [id1, lo1, hi1, id2, lo2, hi2, id3, lo3, hi3], [i1], [i1id, i1lo, i1hi])
-template `[]=`*[D,V;id1,lo1,hi1,id2,lo2,hi2,id3,lo3,hi3,i1id,i1lo,i1hi:static[int],i1ty:static[TPLIndex]](x: gT3[D,V,id1,lo1,hi1,id2,lo2,hi2,id3,lo3,hi3], i1: AnyIndex[i1ty,i1id,i1lo,i1hi], y: V): expr =
+template `[]=`*[D,V;id1,lo1,hi1,id2,lo2,hi2,id3,lo3,hi3,i1id,i1lo,i1hi:static[int],i1ty:static[TPLIndex]](x: gT3[D,V,id1,lo1,hi1,id2,lo2,hi2,id3,lo3,hi3], i1: AnyIndex[i1ty,i1id,i1lo,i1hi], y: V): untyped =
   indexing(x, [id1, lo1, hi1, id2, lo2, hi2, id3, lo3, hi3], [i1], [i1id, i1lo, i1hi], y)
-template `[]`*[D,V;id1,lo1,hi1,id2,lo2,hi2,id3,lo3,hi3,id4,lo4,hi4,i1id,i1lo,i1hi:static[int],i1ty:static[TPLIndex]](x: gT4[D,V,id1,lo1,hi1,id2,lo2,hi2,id3,lo3,hi3,id4,lo4,hi4], i1: AnyIndex[i1ty,i1id,i1lo,i1hi]): expr =
+template `[]`*[D,V;id1,lo1,hi1,id2,lo2,hi2,id3,lo3,hi3,id4,lo4,hi4,i1id,i1lo,i1hi:static[int],i1ty:static[TPLIndex]](x: gT4[D,V,id1,lo1,hi1,id2,lo2,hi2,id3,lo3,hi3,id4,lo4,hi4], i1: AnyIndex[i1ty,i1id,i1lo,i1hi]): untyped =
   indexing(x, [id1, lo1, hi1, id2, lo2, hi2, id3, lo3, hi3, id4, lo4, hi4], [i1], [i1id, i1lo, i1hi])
-template `[]=`*[D,V;id1,lo1,hi1,id2,lo2,hi2,id3,lo3,hi3,id4,lo4,hi4,i1id,i1lo,i1hi:static[int],i1ty:static[TPLIndex]](x: gT4[D,V,id1,lo1,hi1,id2,lo2,hi2,id3,lo3,hi3,id4,lo4,hi4], i1: AnyIndex[i1ty,i1id,i1lo,i1hi], y: V): expr =
+template `[]=`*[D,V;id1,lo1,hi1,id2,lo2,hi2,id3,lo3,hi3,id4,lo4,hi4,i1id,i1lo,i1hi:static[int],i1ty:static[TPLIndex]](x: gT4[D,V,id1,lo1,hi1,id2,lo2,hi2,id3,lo3,hi3,id4,lo4,hi4], i1: AnyIndex[i1ty,i1id,i1lo,i1hi], y: V): untyped =
   indexing(x, [id1, lo1, hi1, id2, lo2, hi2, id3, lo3, hi3, id4, lo4, hi4], [i1], [i1id, i1lo, i1hi], y)
 
-template `[]`*[D,V;id1,lo1,hi1,id2,lo2,hi2,id3,lo3,hi3,i1id,i1lo,i1hi,i2id,i2lo,i2hi:static[int],i1ty,i2ty:static[TPLIndex]](x: gT3[D,V,id1,lo1,hi1,id2,lo2,hi2,id3,lo3,hi3], i1: AnyIndex[i1ty,i1id,i1lo,i1hi], i2: AnyIndex[i2ty,i2id,i2lo,i2hi]): expr =
+template `[]`*[D,V;id1,lo1,hi1,id2,lo2,hi2,id3,lo3,hi3,i1id,i1lo,i1hi,i2id,i2lo,i2hi:static[int],i1ty,i2ty:static[TPLIndex]](x: gT3[D,V,id1,lo1,hi1,id2,lo2,hi2,id3,lo3,hi3], i1: AnyIndex[i1ty,i1id,i1lo,i1hi], i2: AnyIndex[i2ty,i2id,i2lo,i2hi]): untyped =
   indexing(x, [id1, lo1, hi1, id2, lo2, hi2, id3, lo3, hi3], [i1, i2], [i1id, i1lo, i1hi, i2id, i2lo, i2hi])
-template `[]=`*[D,V;id1,lo1,hi1,id2,lo2,hi2,id3,lo3,hi3,i1id,i1lo,i1hi,i2id,i2lo,i2hi:static[int],i1ty,i2ty:static[TPLIndex]](x: gT3[D,V,id1,lo1,hi1,id2,lo2,hi2,id3,lo3,hi3], i1: AnyIndex[i1ty,i1id,i1lo,i1hi], i2: AnyIndex[i2ty,i2id,i2lo,i2hi], y: V): expr =
+template `[]=`*[D,V;id1,lo1,hi1,id2,lo2,hi2,id3,lo3,hi3,i1id,i1lo,i1hi,i2id,i2lo,i2hi:static[int],i1ty,i2ty:static[TPLIndex]](x: gT3[D,V,id1,lo1,hi1,id2,lo2,hi2,id3,lo3,hi3], i1: AnyIndex[i1ty,i1id,i1lo,i1hi], i2: AnyIndex[i2ty,i2id,i2lo,i2hi], y: V): untyped =
   indexing(x, [id1, lo1, hi1, id2, lo2, hi2, id3, lo3, hi3], [i1, i2], [i1id, i1lo, i1hi, i2id, i2lo, i2hi], y)
-template `[]`*[D,V;id1,lo1,hi1,id2,lo2,hi2,id3,lo3,hi3,id4,lo4,hi4,i1id,i1lo,i1hi,i2id,i2lo,i2hi:static[int],i1ty,i2ty:static[TPLIndex]](x: gT4[D,V,id1,lo1,hi1,id2,lo2,hi2,id3,lo3,hi3,id4,lo4,hi4], i1: AnyIndex[i1ty,i1id,i1lo,i1hi], i2: AnyIndex[i2ty,i2id,i2lo,i2hi]): expr =
+template `[]`*[D,V;id1,lo1,hi1,id2,lo2,hi2,id3,lo3,hi3,id4,lo4,hi4,i1id,i1lo,i1hi,i2id,i2lo,i2hi:static[int],i1ty,i2ty:static[TPLIndex]](x: gT4[D,V,id1,lo1,hi1,id2,lo2,hi2,id3,lo3,hi3,id4,lo4,hi4], i1: AnyIndex[i1ty,i1id,i1lo,i1hi], i2: AnyIndex[i2ty,i2id,i2lo,i2hi]): untyped =
   indexing(x, [id1, lo1, hi1, id2, lo2, hi2, id3, lo3, hi3, id4, lo4, hi4], [i1, i2], [i1id, i1lo, i1hi, i2id, i2lo, i2hi])
-template `[]=`*[D,V;id1,lo1,hi1,id2,lo2,hi2,id3,lo3,hi3,id4,lo4,hi4,i1id,i1lo,i1hi,i2id,i2lo,i2hi:static[int],i1ty,i2ty:static[TPLIndex]](x: gT4[D,V,id1,lo1,hi1,id2,lo2,hi2,id3,lo3,hi3,id4,lo4,hi4], i1: AnyIndex[i1ty,i1id,i1lo,i1hi], i2: AnyIndex[i2ty,i2id,i2lo,i2hi], y: V): expr =
+template `[]=`*[D,V;id1,lo1,hi1,id2,lo2,hi2,id3,lo3,hi3,id4,lo4,hi4,i1id,i1lo,i1hi,i2id,i2lo,i2hi:static[int],i1ty,i2ty:static[TPLIndex]](x: gT4[D,V,id1,lo1,hi1,id2,lo2,hi2,id3,lo3,hi3,id4,lo4,hi4], i1: AnyIndex[i1ty,i1id,i1lo,i1hi], i2: AnyIndex[i2ty,i2id,i2lo,i2hi], y: V): untyped =
   indexing(x, [id1, lo1, hi1, id2, lo2, hi2, id3, lo3, hi3, id4, lo4, hi4], [i1, i2], [i1id, i1lo, i1hi, i2id, i2lo, i2hi], y)
 
-template `[]`*[D,V;id1,lo1,hi1,id2,lo2,hi2,id3,lo3,hi3,id4,lo4,hi4,i1id,i1lo,i1hi,i2id,i2lo,i2hi,i3id,i3lo,i3hi:static[int],i1ty,i2ty,i3ty:static[TPLIndex]](x: gT4[D,V,id1,lo1,hi1,id2,lo2,hi2,id3,lo3,hi3,id4,lo4,hi4], i1: AnyIndex[i1ty,i1id,i1lo,i1hi], i2: AnyIndex[i2ty,i2id,i2lo,i2hi], i3: AnyIndex[i3ty,i3id,i3lo,i3hi]): expr =
+template `[]`*[D,V;id1,lo1,hi1,id2,lo2,hi2,id3,lo3,hi3,id4,lo4,hi4,i1id,i1lo,i1hi,i2id,i2lo,i2hi,i3id,i3lo,i3hi:static[int],i1ty,i2ty,i3ty:static[TPLIndex]](x: gT4[D,V,id1,lo1,hi1,id2,lo2,hi2,id3,lo3,hi3,id4,lo4,hi4], i1: AnyIndex[i1ty,i1id,i1lo,i1hi], i2: AnyIndex[i2ty,i2id,i2lo,i2hi], i3: AnyIndex[i3ty,i3id,i3lo,i3hi]): untyped =
   indexing(x, [id1, lo1, hi1, id2, lo2, hi2, id3, lo3, hi3, id4, lo4, hi4], [i1, i2, i3], [i1id, i1lo, i1hi, i2id, i2lo, i2hi, i3id, i3lo, i3hi])
-template `[]=`*[D,V;id1,lo1,hi1,id2,lo2,hi2,id3,lo3,hi3,id4,lo4,hi4,i1id,i1lo,i1hi,i2id,i2lo,i2hi,i3id,i3lo,i3hi:static[int],i1ty,i2ty,i3ty:static[TPLIndex]](x: gT4[D,V,id1,lo1,hi1,id2,lo2,hi2,id3,lo3,hi3,id4,lo4,hi4], i1: AnyIndex[i1ty,i1id,i1lo,i1hi], i2: AnyIndex[i2ty,i2id,i2lo,i2hi], i3: AnyIndex[i3ty,i3id,i3lo,i3hi], y: V): expr =
+template `[]=`*[D,V;id1,lo1,hi1,id2,lo2,hi2,id3,lo3,hi3,id4,lo4,hi4,i1id,i1lo,i1hi,i2id,i2lo,i2hi,i3id,i3lo,i3hi:static[int],i1ty,i2ty,i3ty:static[TPLIndex]](x: gT4[D,V,id1,lo1,hi1,id2,lo2,hi2,id3,lo3,hi3,id4,lo4,hi4], i1: AnyIndex[i1ty,i1id,i1lo,i1hi], i2: AnyIndex[i2ty,i2id,i2lo,i2hi], i3: AnyIndex[i3ty,i3id,i3lo,i3hi], y: V): untyped =
   indexing(x, [id1, lo1, hi1, id2, lo2, hi2, id3, lo3, hi3, id4, lo4, hi4], [i1, i2, i3], [i1id, i1lo, i1hi, i2id, i2lo, i2hi, i3id, i3lo, i3hi], y)
 
 template genUnaryOp(op: untyped): untyped =
-  template op*[D,V;id1,lo1,hi1:static[int]](x: gT1[D,V,id1,lo1,hi1]): expr =
+  template op*[D,V;id1,lo1,hi1:static[int]](x: gT1[D,V,id1,lo1,hi1]): untyped =
     op(x[automaticIndex(id1,lo1,hi1)])
-  template op*[D,V;id1,lo1,hi1,id2,lo2,hi2:static[int]](x: gT2[D,V,id1,lo1,hi1,id2,lo2,hi2]): expr =
+  template op*[D,V;id1,lo1,hi1,id2,lo2,hi2:static[int]](x: gT2[D,V,id1,lo1,hi1,id2,lo2,hi2]): untyped =
     op(x[automaticIndex(id1,lo1,hi1), automaticIndex(id2,lo2,hi2)])
 
 macro genUOp(os: varargs[untyped]): untyped =
@@ -199,21 +199,21 @@ genUnIndexedOps(maxTensorRanks)
 
 #[
 template genBinaryOp(op: untyped): stmt =
-  template op*[lD,lV,rV;lid1,llo1,lhi1:static[int]](x: gT1[lD,lV,lid1,llo1,lhi1], y: rV): expr =
+  template op*[lD,lV,rV;lid1,llo1,lhi1:static[int]](x: gT1[lD,lV,lid1,llo1,lhi1], y: rV): untyped =
     op(x[automaticIndex(lid1,llo1,lhi1)], y)
-  template op*[rD,lV,rV;rid1,rlo1,rhi1:static[int]](x: lV, y: gT1[rD,rV,rid1,rlo1,rhi1]): expr =
+  template op*[rD,lV,rV;rid1,rlo1,rhi1:static[int]](x: lV, y: gT1[rD,rV,rid1,rlo1,rhi1]): untyped =
     op(x, y[automaticIndex(rid1,rlo1,rhi1)])
-  template op*[lD,rD,lV,rV;lid1,llo1,lhi1,rid1,rlo1,rhi1:static[int]](x: gT1[lD,lV,lid1,llo1,lhi1], y: gT1[rD,rV,rid1,rlo1,rhi1]): expr =
+  template op*[lD,rD,lV,rV;lid1,llo1,lhi1,rid1,rlo1,rhi1:static[int]](x: gT1[lD,lV,lid1,llo1,lhi1], y: gT1[rD,rV,rid1,rlo1,rhi1]): untyped =
     op(x[automaticIndex(lid1,llo1,lhi1)], y[automaticIndex(rid1,rlo1,rhi1)])
-  template op*[lD,lV,rV;lid1,llo1,lhi1,lid2,llo2,lhi2:static[int]](x: gT2[lD,lV,lid1,llo1,lhi1,lid2,llo2,lhi2], y: rV): expr =
+  template op*[lD,lV,rV;lid1,llo1,lhi1,lid2,llo2,lhi2:static[int]](x: gT2[lD,lV,lid1,llo1,lhi1,lid2,llo2,lhi2], y: rV): untyped =
     op(x[automaticIndex(lid1,llo1,lhi1),automaticIndex(lid2,llo2,lhi2)], y)
-  template op*[rD,lV,rV;rid1,rlo1,rhi1,rid2,rlo2,rhi2:static[int]](x: lV, y: gT2[rD,rV,rid1,rlo1,rhi1,rid2,rlo2,rhi2]): expr =
+  template op*[rD,lV,rV;rid1,rlo1,rhi1,rid2,rlo2,rhi2:static[int]](x: lV, y: gT2[rD,rV,rid1,rlo1,rhi1,rid2,rlo2,rhi2]): untyped =
     op(x, y[automaticIndex(rid1,rlo1,rhi1),automaticIndex(rid2,rlo2,rhi2)])
-  template op*[lD,rD,lV,rV;lid1,llo1,lhi1,lid2,llo2,lhi2,rid1,rlo1,rhi1:static[int]](x: gT2[lD,lV,lid1,llo1,lhi1,lid2,llo2,lhi2], y: gT1[rD,rV,rid1,rlo1,rhi1]): expr =
+  template op*[lD,rD,lV,rV;lid1,llo1,lhi1,lid2,llo2,lhi2,rid1,rlo1,rhi1:static[int]](x: gT2[lD,lV,lid1,llo1,lhi1,lid2,llo2,lhi2], y: gT1[rD,rV,rid1,rlo1,rhi1]): untyped =
     op(x[automaticIndex(lid1,llo1,lhi1),automaticIndex(lid2,llo2,lhi2)], y[automaticIndex(rid1,rlo1,rhi1)])
-  template op*[lD,rD,lV,rV;lid1,llo1,lhi1,rid1,rlo1,rhi1,rid2,rlo2,rhi2:static[int]](x: gT1[lD,lV,lid1,llo1,lhi1], y: gT2[rD,rV,rid1,rlo1,rhi1,rid2,rlo2,rhi2]): expr =
+  template op*[lD,rD,lV,rV;lid1,llo1,lhi1,rid1,rlo1,rhi1,rid2,rlo2,rhi2:static[int]](x: gT1[lD,lV,lid1,llo1,lhi1], y: gT2[rD,rV,rid1,rlo1,rhi1,rid2,rlo2,rhi2]): untyped =
     op(x[automaticIndex(lid1,llo1,lhi1)], y[automaticIndex(rid1,rlo1,rhi1),automaticIndex(rid2,rlo2,rhi2)])
-  template op*[lD,rD,lV,rV;lid1,llo1,lhi1,lid2,llo2,lhi2,rid1,rlo1,rhi1,rid2,rlo2,rhi2:static[int]](x: gT2[lD,lV,lid1,llo1,lhi1,lid2,llo2,lhi2], y: gT2[rD,rV,rid1,rlo1,rhi1,rid2,rlo2,rhi2]): expr =
+  template op*[lD,rD,lV,rV;lid1,llo1,lhi1,lid2,llo2,lhi2,rid1,rlo1,rhi1,rid2,rlo2,rhi2:static[int]](x: gT2[lD,lV,lid1,llo1,lhi1,lid2,llo2,lhi2], y: gT2[rD,rV,rid1,rlo1,rhi1,rid2,rlo2,rhi2]): untyped =
     op(x[automaticIndex(lid1,llo1,lhi1),automaticIndex(lid2,llo2,lhi2)], y[automaticIndex(rid1,rlo1,rhi1),automaticIndex(rid2,rlo2,rhi2)])
 ]#
 macro genBOp(os: varargs[untyped]): untyped =
@@ -227,7 +227,7 @@ proc convOpToAsgn(n: NimNode): NimNode =
   result[6][0] = newAssignment(n[6][0][1], n[6][0][2])
 macro genAutoIndexAsgn(n: static[int]): untyped =
   var tmp = quote do:
-    template autoIndexAsgn*[lD,rD,lV,rV;lid,llo,lhi,rid,rlo,rhi:static[int]](x: xtype, y: ytype): expr =
+    template autoIndexAsgn*[lD,rD,lV,rV;lid,llo,lhi,rid,rlo,rhi:static[int]](x: xtype, y: ytype): untyped =
       op(x, y)
   tmp.expectKind nnkStmtList
   tmp[0].expectKind nnkTemplateDef
@@ -244,21 +244,21 @@ macro genAutoIndexAsgn(n: static[int]): untyped =
 genAutoIndexAsgn(maxTensorRanks)
 #genAutoIndexAsgn(2)
 #[
-template autoIndexAsgn[lD,lV;lid1,llo1,lhi1:static[int]](x: gT1[lD,lV,lid1,llo1,lhi1], y: lV): expr =
+template autoIndexAsgn[lD,lV;lid1,llo1,lhi1:static[int]](x: gT1[lD,lV,lid1,llo1,lhi1], y: lV): untyped =
   x[automaticIndex(lid1,llo1,lhi1)] = y
-template autoIndexAsgn[rD,rV;rid1,rlo1,rhi1:static[int]](x: rV, y: gT1[rD,rV,rid1,rlo1,rhi1]): expr =
+template autoIndexAsgn[rD,rV;rid1,rlo1,rhi1:static[int]](x: rV, y: gT1[rD,rV,rid1,rlo1,rhi1]): untyped =
   x = y[automaticIndex(rid1,rlo1,rhi1)]
-template autoIndexAsgn[lD,lV,rD,rV;lid1,llo1,lhi1,rid1,rlo1,rhi1:static[int]](x: gT1[lD,lV,lid1,llo1,lhi1], y: gT1[rD,rV,rid1,rlo1,rhi1]): expr =
+template autoIndexAsgn[lD,lV,rD,rV;lid1,llo1,lhi1,rid1,rlo1,rhi1:static[int]](x: gT1[lD,lV,lid1,llo1,lhi1], y: gT1[rD,rV,rid1,rlo1,rhi1]): untyped =
   x[automaticIndex(lid1,llo1,lhi1)] = y[automaticIndex(rid1,rlo1,rhi1)]
-template autoIndexAsgn[lD,lV;lid1,llo1,lhi1,lid2,llo2,lhi2:static[int]](x: gT2[lD,lV,lid1,llo1,lhi1,lid2,llo2,lhi2], y: lV): expr =
+template autoIndexAsgn[lD,lV;lid1,llo1,lhi1,lid2,llo2,lhi2:static[int]](x: gT2[lD,lV,lid1,llo1,lhi1,lid2,llo2,lhi2], y: lV): untyped =
   x[automaticIndex(lid1,llo1,lhi1),automaticIndex(lid2,llo2,lhi2)] = y
-template autoIndexAsgn[rD,rV;rid1,rlo1,rhi1,rid2,rlo2,rhi2:static[int]](x: rV, y: gT2[rD,rV,rid1,rlo1,rhi1,rid2,rlo2,rhi2]): expr =
+template autoIndexAsgn[rD,rV;rid1,rlo1,rhi1,rid2,rlo2,rhi2:static[int]](x: rV, y: gT2[rD,rV,rid1,rlo1,rhi1,rid2,rlo2,rhi2]): untyped =
   x = y[automaticIndex(rid1,rlo1,rhi1),automaticIndex(rid2,rlo2,rhi2)]
-template autoIndexAsgn[lD,lV,rD,rV;lid1,llo1,lhi1,lid2,llo2,lhi2,rid1,rlo1,rhi1:static[int]](x: gT2[lD,lV,lid1,llo1,lhi1,lid2,llo2,lhi2], y: gT1[rD,rV,rid1,rlo1,rhi1]): expr =
+template autoIndexAsgn[lD,lV,rD,rV;lid1,llo1,lhi1,lid2,llo2,lhi2,rid1,rlo1,rhi1:static[int]](x: gT2[lD,lV,lid1,llo1,lhi1,lid2,llo2,lhi2], y: gT1[rD,rV,rid1,rlo1,rhi1]): untyped =
   x[automaticIndex(lid1,llo1,lhi1),automaticIndex(lid2,llo2,lhi2)] = y[automaticIndex(rid1,rlo1,rhi1)]
-template autoIndexAsgn[lD,lV,rD,rV;lid1,llo1,lhi1,rid1,rlo1,rhi1,rid2,rlo2,rhi2:static[int]](x: gT1[lD,lV,lid1,llo1,lhi1], y: gT2[rD,rV,rid1,rlo1,rhi1,rid2,rlo2,rhi2]): expr =
+template autoIndexAsgn[lD,lV,rD,rV;lid1,llo1,lhi1,rid1,rlo1,rhi1,rid2,rlo2,rhi2:static[int]](x: gT1[lD,lV,lid1,llo1,lhi1], y: gT2[rD,rV,rid1,rlo1,rhi1,rid2,rlo2,rhi2]): untyped =
   x[automaticIndex(lid1,llo1,lhi1)] = y[automaticIndex(rid1,rlo1,rhi1),automaticIndex(rid2,rlo2,rhi2)]
-template autoIndexAsgn[lD,lV,rD,rV;lid1,llo1,lhi1,lid2,llo2,lhi2,rid1,rlo1,rhi1,rid2,rlo2,rhi2:static[int]](x: gT2[lD,lV,lid1,llo1,lhi1,lid2,llo2,lhi2], y: gT2[rD,rV,rid1,rlo1,rhi1,rid2,rlo2,rhi2]): expr =
+template autoIndexAsgn[lD,lV,rD,rV;lid1,llo1,lhi1,lid2,llo2,lhi2,rid1,rlo1,rhi1,rid2,rlo2,rhi2:static[int]](x: gT2[lD,lV,lid1,llo1,lhi1,lid2,llo2,lhi2], y: gT2[rD,rV,rid1,rlo1,rhi1,rid2,rlo2,rhi2]): untyped =
   x[automaticIndex(lid1,llo1,lhi1),automaticIndex(lid2,llo2,lhi2)] = y[automaticIndex(rid1,rlo1,rhi1),automaticIndex(rid2,rlo2,rhi2)]
 ]#
 macro autoIndexAsgn*[T](lhs: T, rhs: T): untyped =
@@ -277,7 +277,7 @@ macro autoIndexAsgn*[T](lhs: T, rhs: T): untyped =
 macro autoIndexAsgn*[id,lo,hi:static[int]](lhs: AnyIndex[TPLIndex.index,id,lo,hi], rhs: int): untyped =
   dbg "autoIndexAsgn <= lhs: ", lhs, TPLDebug.detail
   dbg "autoIndexAsgn <= rhs: ", rhs, TPLDebug.detail
-  template ixeq(ix: expr, n: expr): untyped =
+  template ixeq(ix: untyped, n: untyped): untyped =
     ix.index = n
   result = getast ixeq(lhs, rhs)
   dbg "autoIndexAsgn => ", result, TPLDebug.detail
@@ -290,13 +290,13 @@ macro staticforbody(i: untyped, j: int, t: typed, n: untyped): untyped =
   # echo result.treerepr
   # echo result.repr
   # echo "<<<< staticfor"
-template staticforindex*[ty:static[TPLIndex];id,lo,hi:static[int]](i: untyped, t: typedesc[AnyIndex[ty,id,lo,hi]], n: untyped): expr =
+template staticforindex*[ty:static[TPLIndex];id,lo,hi:static[int]](i: untyped, t: typedesc[AnyIndex[ty,id,lo,hi]], n: untyped): untyped =
   when hi >= lo:
     unrollfor j, lo, hi:
       staticforbody(i, j, t, n)
   else:
     error "Unsupported statict for index " & i.repr & " of type " & $t & " in " & n.repr
-template staticforindex*[ty:static[TPLIndex];id,lo,hi:static[int]](i: untyped, t: AnyIndex[ty,id,lo,hi], n: untyped): expr =
+template staticforindex*[ty:static[TPLIndex];id,lo,hi:static[int]](i: untyped, t: AnyIndex[ty,id,lo,hi], n: untyped): untyped =
   staticforindex(i, type(t), n)
 macro staticforstmt*(n: typed): untyped =
   # echo "\n>>>> staticforstmt"
