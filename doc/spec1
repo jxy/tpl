@@ -1,0 +1,36 @@
+TPL specification #1 index type and automatic loop and summation
+
+DESCRIPTION
+     In generic tensor operations dummy indices signal generation of
+     unrollable loops with the effect of repeated indices automatically
+     summed as in Einstein notation.  In parctice any indices that
+
+OPERATION
+     Defining a tensor index type, I, with length L, lower bound B, and
+     stride S.  Elided B and S has default value of 0 and 1 respectively.
+        type
+          I = Index(L,B,S)  # would loop over B, B+S, B+S*2, ..., B+S*(L-1)
+
+     Obtaining variables that representing index type I.
+        var a,b: I
+
+     A `tensor' is any type that has the indexing operator `[]' and `[]='
+     defined.  Nim's builtin `array' and `seq' should work.
+
+     Applying a scalar monadic function to a tensor and saving it
+     in another.
+        tpl:
+          Z[a,b] = f X[a,b]
+
+     Automatic summation of the subtree of the AST.
+        tpl:
+          V[a] = 1 + X[a,b]*U[b]
+     has the same effect as
+        for a in I:
+          V[a] = 1
+          for b in I:
+            V[a] += X[a,b]*U[b]
+     Automatic summation happens in two conditions:
+     0. Within an assignment, sum over any indices from the RHS not at
+        the LHS.
+     1. Outside an assignment, sum over any repeated indices.

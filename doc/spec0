@@ -1,0 +1,16 @@
+TPL specification #0 the library and the macro
+
+DESCRIPTION
+     The Tensor Programming Library (TPL) uses Nim's metaprogramming
+     features to simplify notation of linear algebra and performs compile
+     time optimizations.
+
+OPERATION
+     Any TPL operation would need to `import' the library and call
+     the macro.
+        import TPL
+        tpl:
+          # Statement with TPL specific DSL follows.
+
+     Later specifications may omit the `import' and the macro call for
+     the simplification of notation.
