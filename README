@@ -24,12 +24,10 @@ EXAMPLE
      WIP
 
 FILES
-     TPL.nim
+     src/TPL.nim
           The module for end user to import.
      doc/spec*
           Specifications.
-     test/spec*.nim
-          Tests for each specification.
      LICENSE
           MIT license.
 
@@ -48,7 +46,7 @@ SEE ALSO
           http://nim-lang.org
 
 COMPATIBILITY
-     WIP with Nim v0.16.1 as of 04/03/2017.
+     WIP with Nim v0.17.3 as of 02/02/2018.
 
 BUGS
      Not functional.
