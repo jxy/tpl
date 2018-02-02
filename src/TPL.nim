@@ -160,38 +160,76 @@ macro tplNew(x:typedesc):untyped {.debug.} =
   else:
     error "tplNew: not implemented for '" & $x.gettype & "'"
 
-template tplNew(x:typed,it:varargs[IndexTypeParam]):untyped =
-  type T = tplType(x,it)
-  tplNew(T)
+#template tplNew(x:typed,it:varargs[IndexTypeParam]):untyped =
+#  type T = tplType(x,it)
+#  tplNew(T)
+
+macro elementType(x:typed):untyped {.debug.} =
+  var tt = tensorType x
+  result = tt.elementType
 
 macro tplprefix(n:untyped):untyped =
-  if n.kind notin RoutineNodes:
-    error "Only works for RoutineNodes"
-  result = n
-  result.name = ident("TPL:" & $result.name)
+  var n = n
+  if n.kind == nnkStmtList and n.len == 1:
+    n = n[0]
+  if n.kind in RoutineNodes:
+    result = n
+    result.name = ident("TPL:" & $result.name)
+  elif n.kind in CallNodes + {nnkBlockStmt}:
+    result = n
+    result[0] = ident("TPL:" & $result[0])
+  else:
+     error "Unimplemented for " & n.lisprepr
 
-# Dummy proc symbols; used as tokens for code generation
-proc bracket(x:any,
-  i0:any,
-  p0:any
-  ):auto {.nodecl,tplprefix.} = tplNew(x,i0.Param)
-proc bracket(x:any,
-  i0:any,
-  p0:any,
-  i1:any,
-  p1:any
-  ):auto {.nodecl,tplprefix.} = tplNew(x,i0.Param,i1.Param)
+template tpltemp(n,b:untyped):untyped =
+  tplprefix:
+    block n:
+      b
 
-proc bracketeq(x:any,
-  i0:any,
-  p0:any,
-  z:any) {.nodecl,tplprefix.} = discard
-proc bracketeq(x:any,
-  i0:any,
-  p0:any,
-  i1:any,
-  p1:any,
-  z:any) {.nodecl,tplprefix.} = discard
+# Dummy proc symbols; used as tokens for code generation.
+# The followings use a trick to create proc with specific types
+# that depend on instantiation.
+template `[]`*[P0:static[IndexTypeParam]](x:any,
+    i0:IndexType[P0]
+    ):untyped =
+  tpltemp keeplast:
+    proc bracket(px,pi0,pp0:any):var elementType(x)
+      {.nodecl,tplprefix.} = discard
+    tplprefix(bracket(x,i0,i0.Param))
+template `[]`*[P0,P1:static[IndexTypeParam]](x:any,
+    i0:IndexType[P0],
+    i1:IndexType[P1],
+    ):untyped =
+  tpltemp keeplast:
+    proc bracket(px,pi0,pp0,pi1,pp1:any):var elementType(x)
+      {.nodecl,tplprefix.} = discard
+    tplprefix(bracket(x,i0,i0.Param,i1,i1.Param))
+
+template `[]=`*[P0:static[IndexTypeParam]](x:any,
+    i0:IndexType[P0],
+    z:any
+    ):untyped =
+  tpltemp keeplast:
+    type E = elementType(x)
+    proc bracketeq(px,pi0,pp0:any,pz:E) {.tplprefix.} = discard
+    tplprefix(bracketeq(x,i0,i0.Param,z))
+template `[]=`*[P0,P1:static[IndexTypeParam]](x:any,
+    i0:IndexType[P0],
+    i1:IndexType[P1],
+    z:any
+    ):untyped =
+  tpltemp keeplast:
+    type E = elementType(x)
+    proc bracketeq(px,pi0,pp0,pi1,pp1:any,pz:E) {.tplprefix.} = discard
+    tplprefix(bracketeq(x,i0,i0.Param,i1,i1.Param,z))
+
+proc cleantpl(n:NimNode):NimNode =
+  var n = n
+  if n.kind in {nnkBlockStmt,nnkBlockExpr} and n[0].eqident "TPL:keeplast":
+    if n.len == 2 and n[1].kind in {nnkStmtList,nnkStmtListExpr}: n = n[1][^1]
+    else: error "Unknow input " & n.treerepr
+  result = n.copyNimNode
+  for c in n: result.add c.cleantpl
 
 import metatools
 
@@ -203,36 +241,6 @@ macro Index*(length,bound,stride:typed):untyped =
   let nid = newLit IndexID
   result = getAst(newIndex(nid,length,bound,stride))
   IndexID.inc
-
-macro `[]=`*[P0:static[IndexTypeParam]](
-    a:var openArray,
-    i0:IndexType[P0],
-    x:untyped):untyped {.debug.} =
-  template t(f,a,i0,x:untyped):untyped = f(a,i0,i0.Param,x)
-  result = getAst(t(bindsym"TPL:bracketeq",a,i0,x))
-
-macro `[]=`*[P0,P1:static[IndexTypeParam]](
-    a:var openArray,
-    i0:IndexType[P0],
-    i1:IndexType[P1],
-    x:untyped):untyped {.debug.} =
-  template t(f,a,i0,i1,x:untyped):untyped = f(a,i0,i0.Param,i1,i1.Param,x)
-  result = getAst(t(bindsym"TPL:bracketeq",a,i0,i1,x))
-
-macro `[]`*[P0:static[IndexTypeParam]](
-    a:var openArray,
-    i0:IndexType[P0]
-    ):untyped {.debug.} =
-  template t(f,a,i0:untyped):untyped = f(a,i0,i0.Param)
-  result = getAst(t(bindsym"TPL:bracket",a,i0))
-
-macro `[]`*[P0,P1:static[IndexTypeParam]](
-    a:var openArray,
-    i0:IndexType[P0],
-    i1:IndexType[P1]
-    ):untyped {.debug.} =
-  template t(f,a,i0,i1:untyped):untyped = f(a,i0,i0.Param,i1,i1.Param)
-  result = getAst(t(bindsym"TPL:bracket",a,i0,i1))
 
 proc has(n:NimNode, k:NimNodeKind):bool =
   for c in n:
@@ -383,6 +391,12 @@ proc liftloop(n:NimNode):NimNode =
       result = n.copyNimNode
       for c in n:
         result.add c.liftloop
+  elif n.kind in {nnkDerefExpr,nnkHiddenDeref} and n.len == 1 and
+      n[0].kind in CallNodes and n[0][0].eqident "TPL:loop":
+    result = n[0].copyNimNode
+    for i in 0..<n[0].len-1: result.add n[0][i]
+    result.add n.copyNimNode
+    result[^1].add n[0][^1].liftloop
   else:
     result = n.copyNimNode
     for c in n:
@@ -405,7 +419,7 @@ proc gencode(n:NimNode):NimNode =
   result = n
 
 macro tpl*(n:typed):untyped {.debug.} =
-  result = n.cleanup.parse.gencode.rebuild
+  result = n.cleanup.cleantpl.parse.gencode.rebuild
 
 when isMainModule:
   tpl:
@@ -424,7 +438,7 @@ when isMainModule:
       b:J
     X[a] = 1
     Y[a] = a.float
-    X[a] = X[a] + Y[a]
+    X[a] += Y[a]
     A[b,a] = b.float + 0.001 * a.float
     echo A[b,a]
     Z[b] = A[b,a] * X[a]
