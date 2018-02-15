@@ -181,47 +181,63 @@ macro tplprefix(n:untyped):untyped =
   else:
      error "Unimplemented for " & n.lisprepr
 
+proc newtpl(s:string, lineInfoFrom:NimNode=nil):NimNode =
+  newNimNode(nnkCall, lineInfoFrom).add ident("TPL:"&s)
+
+proc istpl(n:NimNode,s:string):bool =
+  n.kind == nnkCall and n[0].eqident("TPL:"&s)
+
 template tpltemp(n,b:untyped):untyped =
   tplprefix:
     block n:
       b
 
 # Dummy proc symbols; used as tokens for code generation.
+#proc index[P:static[IndexTypeParam]](
+#  i:IndexType[P],p:static[IndexTypeParam]):int {.nodecl,tplprefix.} = discard
+proc index(i,p:any):int {.nodecl,tplprefix.} = discard
+
 # The followings use a trick to create proc with specific types
 # that depend on instantiation.
 template `[]`*[P0:static[IndexTypeParam]](x:any,
     i0:IndexType[P0]
     ):untyped =
   tpltemp keeplast:
-    proc bracket(px,pi0,pp0:any):var elementType(x)
-      {.nodecl,tplprefix.} = discard
-    tplprefix(bracket(x,i0,i0.Param))
+    type R = tplType(x, [i0.Param])
+    proc bracket(px,pi0:any):var R {.nodecl,tplprefix.} = discard
+    tplprefix(bracket(x,
+      tplprefix(index(i0,i0.Param))))
 template `[]`*[P0,P1:static[IndexTypeParam]](x:any,
     i0:IndexType[P0],
     i1:IndexType[P1],
     ):untyped =
   tpltemp keeplast:
-    proc bracket(px,pi0,pp0,pi1,pp1:any):var elementType(x)
-      {.nodecl,tplprefix.} = discard
-    tplprefix(bracket(x,i0,i0.Param,i1,i1.Param))
+    type R = tplType(x, [i0.Param,i1.Param])
+    proc bracket(px,pi0,pi1:any):var R {.nodecl,tplprefix.} = discard
+    tplprefix(bracket(x,
+      tplprefix(index(i0,i0.Param)),
+      tplprefix(index(i1,i1.Param))))
 
 template `[]=`*[P0:static[IndexTypeParam]](x:any,
     i0:IndexType[P0],
     z:any
     ):untyped =
   tpltemp keeplast:
-    type E = elementType(x)
-    proc bracketeq(px,pi0,pp0:any,pz:E) {.tplprefix.} = discard
-    tplprefix(bracketeq(x,i0,i0.Param,z))
+    type R = tplType(x, [i0.Param])
+    proc bracket(px,pi0:any):var R {.nodecl,tplprefix.} = discard
+    tplprefix(bracket(x,
+      tplprefix(index(i0,i0.Param)))) = z
 template `[]=`*[P0,P1:static[IndexTypeParam]](x:any,
     i0:IndexType[P0],
     i1:IndexType[P1],
     z:any
     ):untyped =
   tpltemp keeplast:
-    type E = elementType(x)
-    proc bracketeq(px,pi0,pp0,pi1,pp1:any,pz:E) {.tplprefix.} = discard
-    tplprefix(bracketeq(x,i0,i0.Param,i1,i1.Param,z))
+    type R = tplType(x, [i0.Param,i1.Param])
+    proc bracket(px,pi0,pi1:any):var R {.nodecl,tplprefix.} = discard
+    tplprefix(bracket(x,
+      tplprefix(index(i0,i0.Param)),
+      tplprefix(index(i1,i1.Param)))) = z
 
 proc cleantpl(n:NimNode):NimNode =
   var n = n
@@ -242,10 +258,25 @@ macro Index*(length,bound,stride:typed):untyped =
   result = getAst(newIndex(nid,length,bound,stride))
   IndexID.inc
 
+proc replace(n,x,y:NimNode):NimNode =
+  if n == x:
+    result = y.copy
+  else:
+    result = n.copyNimNode
+    for c in n:
+      result.add c.replace(x,y)
+
 proc has(n:NimNode, k:NimNodeKind):bool =
   for c in n:
     if c.kind == k: return true
   return false
+
+proc contains(n,item:NimNode):bool =
+  result = false
+  for c in n:
+    if c == item:
+      result = true
+      break
 
 proc cleanup*(n:NimNode):NimNode =
   ## This cleans up typed AST, makes the AST easier to work with.
@@ -313,113 +344,190 @@ proc fixpoint(n:NimNode, f:proc):NimNode =
   echo result.repr
   echo ">}----------"
 
-proc genloop(n:NimNode, v:seq[NimNode]):NimNode =
-  if n.kind == nnkCall and n[0].eqident "TPL:bracketeq":
-    # echo n.treerepr
-    result = newCall(ident"TPL:loop")
-    var v = v
-    for i in countup(3,n.len-2,2):
-      if n[i].get("kind").intval == 0 and n[i-1] notin v:
-        result.add n[i-1]
-        v.add n[i-1]
-    if result.len == 1:
-      result = n.copyNimNode
-      for c in n:
-        result.add c.genloop v
-    else:
-      result.add n.copyNimNode
-      for c in n:
-        result[^1].add c.genloop v
-  elif n.kind == nnkCall and n[0].eqident "TPL:bracket":
-    # echo n.treerepr
-    result = newCall(ident"TPL:loop")
-    var v = v
-    for i in countup(3,n.len-1,2):
-      if n[i].get("kind").intval == 0 and n[i-1] notin v:
-        result.add n[i-1]
-        v.add n[i-1]
-    if result.len == 1:
-      result = n.copyNimNode
-      for c in n:
-        result.add c.genloop v
-    else:
-      result.add n.copyNimNode
-      for c in n:
-        result[^1].add c.genloop v
-  else:
-    result = n.copyNimNode
+type LoopAST = object  ## Each node in loop is an nnkPar.
+  node: NimNode  ## The original NimNode.
+  loop: NimNode  ## The same structure as node, but contains loop vars.
+  param: NimNode  ## A list of pairs of a loop var and its parameter.
+
+proc initLoopAST(n:NimNode):LoopAST =
+  proc f(n:NimNode):NimNode =
+    result = newpar()
     for c in n:
-      result.add c.genloop v
+      result.add c.f
+    result.add newpar()  # The extra nnkpar is for loop variables
+  result.node = n
+  result.loop = n.f
+  result.param = newpar()
+proc len(n:LoopAST):int = n.node.len
+proc kind(n:LoopAST):NimNodeKind = n.node.kind
+proc `[]`(n:LoopAST,i:int):LoopAST =
+  result.node = n.node[i]
+  result.loop = n.loop[i]
+  result.param = n.param
+proc vars(n:LoopAST):NimNode = n.loop[^1]
+proc `vars=`(n:LoopAST,v:NimNode) = n.loop[^1] = v
+iterator items(n:LoopAST):LoopAST =
+  var i = 0
+  while i < n.len:
+    yield n[i]
+    i.inc
 
-const AllCallNodes = CallNodes + {nnkConv}
+proc createLoops(n:NimNode):LoopAST =
+  proc f(ast:LoopAST) =
+    let n = ast.node
+    if n.istpl"bracket":
+      for i in 2..<n.len:
+        if not n[i].istpl"index":
+          var s = "Unexpected: " & n[i].lisprepr
+          s &= "\nElement " & $i & " of: " & n.repr
+          error s
+        if n[i][2].get("kind").intval == 0:
+          if n[i][1] notin ast.vars: ast.vars.add n[i][1]
+          var absent = true
+          for p in ast.param:
+            if p[0] == n[i][1]:
+              absent = false
+              break
+          if absent:
+            ast.param.add newpar(n[i][1], n[i][2])
+    for c in ast: c.f
+  result = n.initLoopAST
+  result.f
 
-proc liftloop(n:NimNode):NimNode =
-  if n.kind in AllCallNodes:
-    var shared = newseq[NimNode]()
-    for i in 1..<n.len:
-      if n[i].kind in CallNodes and n[i][0].eqident "TPL:loop":
-        if shared.len == 0:
-          for j in 1..<n[i].len-1:
-            shared.add n[i][j]
-        else:
-          var vs = newseq[NimNode]()
-          for j in 1..<n[i].len-1:
-            if n[i][j] in shared: vs.add n[i][j]
-          shared = vs
-          if shared.len == 0: break
-      else:
-        shared.setlen 0
+var
+  SumBoundaryProcs* = @["+", "-", "*", "/", "*=", "/="]
+    ## We will not lift loops above the tree of the call nodes with the
+    ## listed procedures (in addition to the `nnkAsgn` node), if the
+    ## loop variables of the automatic loops are not shared among
+    ## the arguments of the procedures.
+  SumBoundaryExceptionArgs* = @[
+    ("*=", @[1]),
+    ("/=", @[1])
+    ]
+    ## For those procs in `SumBoundaryProcs`, we make exceptions for
+    ## some arguments, specified with the index of the NimNode, such
+    ## that any loops of those arguments will be lifted to be loops of
+    ## the call node.
+
+const
+  LoopBoundaryNodes = {nnkStmtList,nnkStmtListExpr}  # Need more here.
+  AllCallNodes = {nnkConv} + CallNodes
+  SumNodes = AllCallNodes + {nnkAsgn}  # Sum loops that are their children
+
+proc collectLoops(n:LoopAST) =
+  ## Depth first; collecting loop variables from lower branches.
+  for c in n: c.collectLoops
+  if n.kind in LoopBoundaryNodes: return
+  for c in n:
+    for v in c.vars:
+      if v notin n.vars:
+        n.vars.add v
+
+proc cleanSumBoundary(n:LoopAST) =
+  ## Width first; remove non-shared loop variables for
+  ## `SumBoundaryProcs` and `nnkAsgn`.
+  var isSumBoundary = n.kind == nnkAsgn
+  if (not isSumBoundary) and n.kind in AllCallNodes:
+    for p in SumBoundaryProcs:
+      if n.node[0].eqident p:
+        isSumBoundary = true
         break
-    if shared.len > 0:
-      echo "***** ",n.lisprepr
-      echo "..... ",shared
-      result = newCall(ident"TPL:loop")
-      for v in shared: result.add v
-      for i in 1..<n.len:
-        if n[i].len == shared.len + 2:
-          n[i] = n[i][^1].liftloop
-        else:
-          var ni = n[i].copy
-          n[i] = ni.copyNimNode
-          n[i].add ni[0]
-          for j in 1..<ni.len-1:
-            if ni[j] notin shared: n[i].add ni[j]
-          n[i].add ni[^1].liftloop
-      result.add n
-      echo "^^^^^ ",result.lisprepr
+  if isSumBoundary:
+    # Remove non-loops loop variables.
+    # Skip the 0th node if we are in `AllCallNodes`
+    let skip = if n.kind in AllCallNodes: 1 else: 0
+    var loops = n[skip].vars.copy  # copy is important
+    for i in skip+1..<n.len:
+      var t = newpar()
+      for v in loops:
+        if v in n[i].vars: t.add v
+      loops = t
+    if n.kind == nnkAsgn:
+      for v in n[0].vars:
+        if v notin loops:
+          loops.add v
     else:
-      result = n.copyNimNode
-      for c in n:
-        result.add c.liftloop
-  elif n.kind in {nnkDerefExpr,nnkHiddenDeref} and n.len == 1 and
-      n[0].kind in CallNodes and n[0][0].eqident "TPL:loop":
-    result = n[0].copyNimNode
-    for i in 0..<n[0].len-1: result.add n[0][i]
-    result.add n.copyNimNode
-    result[^1].add n[0][^1].liftloop
-  else:
-    result = n.copyNimNode
-    for c in n:
-      result.add c.liftloop
+      for e in SumBoundaryExceptionArgs:
+        if n.node[0].eqident e[0]:
+          for i in e[1]:
+            for v in n[i].vars:
+              if v notin loops:
+                loops.add v
+    for i in countdown(n.vars.len-1,0):
+      if n.vars[i] notin loops:
+        n.vars.del i
+  for c in n: c.cleanSumBoundary
 
-proc gensum(n:NimNode):NimNode =
-  result = n
+proc cleanLoops(n:LoopAST) =
+  ## Clean redundent loops that were left over by `collectLoops`.
+  proc f(n:LoopAST,vs:NimNode) =
+    # `vs` collects loop vars from the tree trunk.
+    var vs = vs.copy
+    for i in countdown(n.vars.len-1,0):
+      if n.vars[i] in vs:
+        n.vars.del i
+      else:
+        vs.add n.vars[i]
+    for c in n: c.f vs
+  n.f newpar()
+
+proc genNode(n:LoopAST):NimNode =
+  ## Add loop or sum nodes with loop variables.
+  result = n.node.copyNimNode
+  for c in n:
+    var branch = c.genNode
+    if c.vars.len > 0:
+      var loop:NimNode
+      if n.kind in SumNodes:
+        loop = newtpl("sumReturn",branch)
+        loop.add newtpl("sumvar",branch)
+        loop[1].add branch.gettypeinst
+      else:
+        loop = newtpl("loop",branch)
+      for v in c.vars:
+        var i = 0
+        while i < c.param.len:
+          # echo v,"  =?=  ",c.param[i].repr
+          if c.param[i][0] == v: break
+          i.inc
+        if i >= c.param.len:
+          var s = "Cannot find loop var: " & v.repr
+          s &= "\nFor node: " & c.node.repr
+          s &= "\nKnown vars: " & c.param.repr
+          error s
+        loop.add c.param[i]
+      loop.add branch
+      # echo "#### ",loop.repr
+      branch = loop
+    result.add branch
+  if result.kind == nnkAsgn and result[1].istpl"sumReturn":
+    var r = newtpl("sumAsgn",result[1])
+    r.add result[0]
+    for i in 2..<result[1].len:
+      r.add result[1][i]
+    result = r
 
 proc fuse(n:NimNode):NimNode =
+  # FIXME
   result = n
 
-proc parse(n:NimNode):NimNode =
-  echo "----------{ parse"
+proc gencode(n:NimNode):NimNode =
+  # FIXME
+  result = n
+
+proc genloopsum(n:NimNode):NimNode =
+  echo "----------{ genloopsum"
   # echo n.treerepr
-  result = n.genloop(@[]).fixpoint(liftloop).gensum.fixpoint(fuse)
+  var loopast = n.createLoops
+  loopast.collectLoops
+  loopast.cleanSumBoundary
+  loopast.cleanLoops
+  result = loopast.genNode
   # echo result.treerepr
   echo "}----------"
 
-proc gencode(n:NimNode):NimNode =
-  result = n
-
 macro tpl*(n:typed):untyped {.debug.} =
-  result = n.cleanup.cleantpl.parse.gencode.rebuild
+  result = n.cleanup.cleantpl.genloopsum.fixpoint(fuse).gencode.rebuild
 
 when isMainModule:
   tpl:
@@ -444,3 +552,6 @@ when isMainModule:
     Z[b] = A[b,a] * X[a]
     m = Z[b]
     echo Z[b]
+    echo m
+    m = Z[b] * A[b,a] * X[a]
+    echo m
