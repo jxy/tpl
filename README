@@ -49,7 +49,7 @@ COMPATIBILITY
      WIP with Nim v0.17.3 as of 02/02/2018.
 
 BUGS
-     Not functional.
+     Only works in `proc`s.
      APIs will change.
 
 HISTORY

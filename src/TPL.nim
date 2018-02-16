@@ -247,6 +247,33 @@ proc cleantpl(n:NimNode):NimNode =
   result = n.copyNimNode
   for c in n: result.add c.cleantpl
 
+# Our indexing convention for `openArray`s
+template `[]`(x:openArray, a,b:int):untyped = x[a][b]
+template `[]`(x:openArray, a,b,c:int):untyped = x[a][b][c]
+template `[]=`(x:openArray, a,b:int, z:any):untyped = x[a][b]=z
+template `[]=`(x:openArray, a,b,c:int, z:any):untyped = x[a][b][c]=z
+
+# Templates for actual code generation
+template TPLloop(i, len, bound, stride, body:untyped):untyped =
+  var i {.codegendecl:"/* $# $# */",noinit.}: cint
+  {.emit:
+    ["for(int ",i,"=",bound,";",
+      i,"<",bound,"+",stride,"*",len,";",
+      i,"+=",stride,"){"
+    ].}
+  body
+  {.emit:"}".}
+
+template TPLsumAsgn(v, i, len, bound, stride, body:untyped):untyped =
+  v = 0
+  TPLloop(i, len, bound, stride):
+    v += body
+
+template TPLsumReturn(t, i, len, bound, stride, body:untyped):untyped =
+  var v {.noinit.}:t
+  TPLsumAsgn(v, i, len, bound, stride, body)
+  v
+
 import metatools
 
 var IndexID {.compileTime.} = 0
@@ -259,6 +286,7 @@ macro Index*(length,bound,stride:typed):untyped =
   IndexID.inc
 
 proc replace(n,x,y:NimNode):NimNode =
+  ## Replace `x` in `n` with a copy of `y`.
   if n == x:
     result = y.copy
   else:
@@ -365,7 +393,6 @@ proc `[]`(n:LoopAST,i:int):LoopAST =
   result.loop = n.loop[i]
   result.param = n.param
 proc vars(n:LoopAST):NimNode = n.loop[^1]
-proc `vars=`(n:LoopAST,v:NimNode) = n.loop[^1] = v
 iterator items(n:LoopAST):LoopAST =
   var i = 0
   while i < n.len:
@@ -395,12 +422,12 @@ proc createLoops(n:NimNode):LoopAST =
   result.f
 
 var
-  SumBoundaryProcs* = @["+", "-", "*", "/", "*=", "/="]
+  SumBoundaryProcs* {.compileTime.} = @["+", "-", "*", "/", "*=", "/="]
     ## We will not lift loops above the tree of the call nodes with the
     ## listed procedures (in addition to the `nnkAsgn` node), if the
     ## loop variables of the automatic loops are not shared among
     ## the arguments of the procedures.
-  SumBoundaryExceptionArgs* = @[
+  SumBoundaryExceptionArgs* {.compileTime.} = @[
     ("*=", @[1]),
     ("/=", @[1])
     ]
@@ -480,8 +507,9 @@ proc genNode(n:LoopAST):NimNode =
       var loop:NimNode
       if n.kind in SumNodes:
         loop = newtpl("sumReturn",branch)
-        loop.add newtpl("sumvar",branch)
-        loop[1].add branch.gettypeinst
+        #loop.add newtpl("sumvar",branch)
+        #loop[1].add branch.gettypeinst
+        loop.add branch.gettypeinst
       else:
         loop = newtpl("loop",branch)
       for v in c.vars:
@@ -512,8 +540,49 @@ proc fuse(n:NimNode):NimNode =
   result = n
 
 proc gencode(n:NimNode):NimNode =
-  # FIXME
-  result = n
+  # FIXME: We will need to order the loops according to memory layout.
+  if n.istpl"loop":
+    # Break up more than one loop variables.
+    result = n[^1].gencode
+    for i in countdown(n.len-2, 1):
+      var loop = newNimNode(nnkCall,result)
+      loop.add bindsym"TPLloop"
+      let
+        v = n[i][0]
+        le = n[i][1].get"len"
+        bo = n[i][1].get"bound"
+        st = n[i][1].get"stride"
+        u = gensym(nskVar, $v)
+      loop.add(u,le,bo,st,result.replace(v,u))
+      result = loop
+  elif n.istpl"sumAsgn" or n.istpl"sumReturn":
+    # Break up more than one loop variables to `sumReturn`s.
+    result = n[^1].gencode
+    let t = if n.istpl"sumAsgn": n[^1].gettypeinst else: n[1]
+    for i in countdown(n.len-2, 2):
+      var loop = newNimNode(nnkCall,result)
+      loop.add bindsym"TPLsumReturn"
+      let
+        v = n[i][0]
+        le = n[i][1].get"len"
+        bo = n[i][1].get"bound"
+        st = n[i][1].get"stride"
+        u = gensym(nskVar, $v)
+      loop.add(t,u,le,bo,st,result.replace(v,u))
+      result = loop
+    if n.istpl"sumAsgn":
+      result[0] = bindsym"TPLsumAsgn"
+      result[1] = n[1].gencode
+  elif n.istpl"bracket":
+    result = newNimNode(nnkBracketExpr,n)
+    for i in 1..<n.len:
+      result.add n[i].gencode
+  elif n.istpl"index":
+    result = n[1]
+  else:
+    result = n.copyNimNode
+    for c in n:
+      result.add c.gencode
 
 proc genloopsum(n:NimNode):NimNode =
   echo "----------{ genloopsum"
@@ -526,32 +595,43 @@ proc genloopsum(n:NimNode):NimNode =
   # echo result.treerepr
   echo "}----------"
 
+proc extraFix(n:NimNode):NimNode =
+  var n = n
+  if n.kind == nnkHiddenDeref:
+    while n.kind == nnkHiddenDeref:
+      n = n[0]
+  result = n.copyNimNode
+  for c in n:
+    result.add c.extraFix
+
 macro tpl*(n:typed):untyped {.debug.} =
   result = n.cleanup.cleantpl.genloopsum.fixpoint(fuse).gencode.rebuild
+  result = result.extraFix
 
 when isMainModule:
-  tpl:
-    const
-      L = 3
-      M = 2
-    type
-      I = Index(L,0,1) # Index(L,B,S)
-      J = Index(M,0,1)
-    var
-      X,Y:array[L,float]
-      A:array[M,array[L,float]]
-      Z:array[M,float]
-      m:float
-      a:I
-      b:J
-    X[a] = 1
-    Y[a] = a.float
-    X[a] += Y[a]
-    A[b,a] = b.float + 0.001 * a.float
-    echo A[b,a]
-    Z[b] = A[b,a] * X[a]
-    m = Z[b]
-    echo Z[b]
-    echo m
-    m = Z[b] * A[b,a] * X[a]
-    echo m
+  proc f =
+    tpl:
+      const
+        L = 3
+        M = 2
+      type
+        I = Index(L,0,1) # Index(L,B,S)
+        J = Index(M,0,1)
+      var
+        X,Y:array[L,float]
+        A:array[M,array[L,float]]
+        Z:array[M,float]
+        m:float
+        a:I
+        b:J
+      Y[a] = a.float
+      X[a] += Y[a]
+      A[b,a] = b.float + 0.001 * a.float
+      echo "[b:",b.int,", a:",a.int,"]: ",A[b,a]
+      Z[b] = A[b,a] * X[a]
+      m = Z[b]
+      echo "[b:",b.int,"]: ",Z[b]
+      echo "m0: ",m
+      m = Z[b] * A[b,a] * X[a]
+      echo "m1: ",m
+  f()
