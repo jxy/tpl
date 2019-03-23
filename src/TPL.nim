@@ -1,8 +1,15 @@
 import macros
 import strutils
 
+macro debugecho(x:varargs[typed]):untyped =
+  result = newstmtlist()
+  if not defined(release):
+    result.add(newCall(bindsym"echo"))
+    for c in x:
+      result[0].add c
 macro debug(n:untyped):untyped =
   #echo n.treerepr
+  if defined(release): return n
   proc pp(nn:NimNode,s,ns:string) =
     var label = " "
     if s.len > 0 or ns.len > 0: label &= "["&s&"::"&ns&"] "
@@ -10,7 +17,7 @@ macro debug(n:untyped):untyped =
       let ti = nn.gettypeinst
       echo "DEBUG: ",nn.lineinfo,label,nn.lisprepr," : ",ti.lisprepr
       if ti.kind == nnkSym:
-        echo "    TYPE: ",ti.symbol.getimpl.lisprepr
+        echo "    TYPE: ",ti.getimpl.lisprepr
     else:
       echo "DEBUG: ",nn.lineinfo,label,nn.lisprepr
     if nn.kind notin AtomicNodes and nn.len > 0:
@@ -154,19 +161,19 @@ macro tplType(x:typed,ix:typed):untyped {.debug.} =
     it = indexType ix
   result = indexingResultType(tt,it)
 
-macro tplNew(x:typedesc):untyped {.debug.} =
-  if x.gettype[1].eqident "float":
-    result = newLit(0.0)
-  else:
-    error "tplNew: not implemented for '" & $x.gettype & "'"
+#macro tplNew(x:typedesc):untyped {.debug.} =
+#  if x.gettype[1].eqident "float":
+#    result = newLit(0.0)
+#  else:
+#    error "tplNew: not implemented for '" & $x.gettype & "'"
 
 #template tplNew(x:typed,it:varargs[IndexTypeParam]):untyped =
 #  type T = tplType(x,it)
 #  tplNew(T)
 
-macro elementType(x:typed):untyped {.debug.} =
-  var tt = tensorType x
-  result = tt.elementType
+#macro elementType(x:typed):untyped {.debug.} =
+#  var tt = tensorType x
+#  result = tt.elementType
 
 macro tplprefix(n:untyped):untyped =
   var n = n
@@ -352,9 +359,9 @@ proc cleanup*(n:NimNode):NimNode =
 
 var TPLMaxRec {.compileTime.} = 100
 proc fixpoint(n:NimNode, f:proc):NimNode =
-  echo "----------{ fixpoint <"
-  echo n.repr
-  echo ">"
+  debugecho "----------{ fixpoint <"
+  debugecho n.repr
+  debugecho ">"
   var
     j = 0
     n = n
@@ -368,9 +375,9 @@ proc fixpoint(n:NimNode, f:proc):NimNode =
     nn = f(nn)
     j.inc
   result = nn
-  echo "< result"
-  echo result.repr
-  echo ">}----------"
+  debugecho "< result"
+  debugecho result.repr
+  debugecho ">}----------"
 
 type LoopAST = object  ## Each node in loop is an nnkPar.
   node: NimNode  ## The original NimNode.
@@ -585,7 +592,7 @@ proc gencode(n:NimNode):NimNode =
       result.add c.gencode
 
 proc genloopsum(n:NimNode):NimNode =
-  echo "----------{ genloopsum"
+  debugecho "----------{ genloopsum"
   # echo n.treerepr
   var loopast = n.createLoops
   loopast.collectLoops
@@ -593,7 +600,7 @@ proc genloopsum(n:NimNode):NimNode =
   loopast.cleanLoops
   result = loopast.genNode
   # echo result.treerepr
-  echo "}----------"
+  debugecho "}----------"
 
 proc extraFix(n:NimNode):NimNode =
   var n = n
